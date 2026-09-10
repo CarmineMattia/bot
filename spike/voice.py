@@ -130,7 +130,7 @@ def transcribe(path: Path) -> str:
         try:
             text = fn(path)
             if text:
-                return text
+                return _normalize_transcript(text)
             errors.append(f"{fn.__name__}: empty transcript")
         except VoiceError as e:
             if str(e) != "missing":
@@ -141,6 +141,13 @@ def transcribe(path: Path) -> str:
         "STT unavailable. Install openai-whisper (`pip install openai-whisper`) "
         "or the `whisper` CLI. Details: " + "; ".join(errors[:3])
     )
+
+
+def _normalize_transcript(text: str) -> str:
+    """Light cleanup so stub planner phrases still match Whisper punctuation."""
+    t = " ".join(text.strip().split())
+    t = t.strip(".,!?;:\"' ")
+    return t
 
 
 def listen(

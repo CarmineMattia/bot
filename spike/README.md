@@ -130,11 +130,13 @@ Invalid/unreachable brain → automatic stub fallback. Steps are allowlisted (Fo
 
 Same turn cycle: mic → STT → plan/act → optional TTS of `user_reply`.
 
+**STT dependency (host):** `pip install --user openai-whisper` (needs `ffmpeg`). First run downloads Whisper weights (`BOT_WHISPER_MODEL`, default `base`).
+
 ```bash
 # TTS only (needs espeak-ng)
 python3 -m spike --speak --no "click Delete"
 
-# Record 4s, STT (needs openai-whisper), then run, then speak reply
+# Record 4s, STT, then run, then speak reply
 python3 -m spike --listen 4 --speak
 
 # Or STT an existing file

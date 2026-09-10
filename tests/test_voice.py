@@ -20,9 +20,9 @@ def _write_silent_wav(path: Path, *, seconds: float = 0.2, rate: int = 16000) ->
 
 class VoiceSpeakTests(unittest.TestCase):
     def test_speak_invokes_espeak(self) -> None:
-        with patch("spike.voice.shutil.which", return_value="/usr/bin/espeak-ng"), patch(
-            "spike.voice.subprocess.run"
-        ) as run:
+        with patch.dict("os.environ", {"BOT_SPEAK": "1"}), patch(
+            "spike.voice.shutil.which", return_value="/usr/bin/espeak-ng"
+        ), patch("spike.voice.subprocess.run") as run:
             run.return_value.returncode = 0
             voice.speak("hello bot")
         run.assert_called_once()
@@ -38,10 +38,11 @@ class VoiceSpeakTests(unittest.TestCase):
         run.assert_not_called()
 
     def test_speak_missing_espeak(self) -> None:
-        with patch("spike.voice.shutil.which", return_value=None):
+        with patch.dict("os.environ", {"BOT_SPEAK": "1"}), patch(
+            "spike.voice.shutil.which", return_value=None
+        ):
             with self.assertRaises(voice.VoiceError):
                 voice.speak("x")
-
 
 class VoiceSttTests(unittest.TestCase):
     def test_transcribe_fails_closed_without_whisper(self) -> None:
@@ -63,6 +64,9 @@ class VoiceSttTests(unittest.TestCase):
                         voice.transcribe(path)
         self.assertIn("STT unavailable", str(ctx.exception))
 
+    def test_normalize_strips_whisper_punctuation(self) -> None:
+        self.assertEqual(voice._normalize_transcript("new tab."), "new tab")
+        self.assertEqual(voice._normalize_transcript("  Focus Files!  "), "Focus Files")
 
 class VoiceListenTests(unittest.TestCase):
     def test_generated_wav_fd_closed_and_file_removed_on_transcribe_error(self) -> None:

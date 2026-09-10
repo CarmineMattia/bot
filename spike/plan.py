@@ -167,10 +167,26 @@ def plan_step(
 ) -> dict[str, Any] | None:
     """Plan exactly one spike step.
 
-    Tries the LLM brain first (unless disabled); on failure falls back to the
-    deterministic stub (`code`/`omp` prefix + GUI phrases).
+    Explicit ``code``/``omp`` prefixes always use the stub CodeTask path (deterministic
+    tests + operator intent). Otherwise try the LLM brain when enabled; on failure
+    fall back to GUI phrase stubs.
     """
     root = (workspace or Path.cwd()).expanduser().resolve()
+
+    match = re.match(
+        r"^(?:code|omp)\s+(.+)$",
+        user_text.strip(),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        prompt = match.group(1).strip()
+        if prompt:
+            return {
+                "type": "CodeTask",
+                "prompt": prompt,
+                "workspace": str(root),
+            }
+
     if use_brain is None:
         from . import brain
 
@@ -191,19 +207,6 @@ def plan_step(
         except brain.BrainError:
             pass
 
-    match = re.match(
-        r"^(?:code|omp)\s+(.+)$",
-        user_text.strip(),
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-    if match:
-        prompt = match.group(1).strip()
-        if prompt:
-            return {
-                "type": "CodeTask",
-                "prompt": prompt,
-                "workspace": str(root),
-            }
     return plan_gui_step(user_text)
 
 

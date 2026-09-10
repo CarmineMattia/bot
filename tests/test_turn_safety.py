@@ -42,6 +42,7 @@ class OneGestureTurnTests(unittest.TestCase):
             patch.object(driver.overlay, "clear"),
             patch.object(driver.confirm, "abortable_pause", return_value=False),
             patch.object(driver.time, "sleep"),
+            patch.object(driver.a11y, "target_hint_for_step", return_value={}),
             patch.object(
                 driver.a11y,
                 "observe",
@@ -69,6 +70,7 @@ class OneGestureTurnTests(unittest.TestCase):
             patch.object(driver.overlay, "clear"),
             patch.object(driver.confirm, "abortable_pause", return_value=False),
             patch.object(driver.time, "sleep"),
+            patch.object(driver.a11y, "target_hint_for_step", return_value={}),
             patch.object(
                 driver.a11y,
                 "observe",

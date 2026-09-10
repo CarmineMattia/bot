@@ -5,7 +5,7 @@ Throwaway-quality driver that exercises [docs/gui-loop.md](../docs/gui-loop.md) 
 ## What it does
 
 1. Stub-plans `FocusWindow` (`terminal` / `files` / `editor`)
-2. Announce on stderr before act
+2. Announce via overlay (status bar + crosshair/rect) before act; also logged on stderr
 3. Ensure target is in AT-SPI tree (launch/rebind only if **zero** frames)
 4. Try D-Bus Activate + AT-SPI `default.activate`
 5. If still not ACTIVE: **raise via GNOME Overview** (`ydotool` Super → type → Enter)
@@ -42,6 +42,15 @@ python3 -m spike --raise-only "focus the terminal"
 `--raise-only` never launches. If frames are 0 → immediate `stop`.
 
 **Pass for Silvio:** ACTIVE Files↔Terminal transitions, frame counts stay at baseline (no growth from monitor start).
+
+## Overlay UI
+
+Real GTK surface during announce/acting (status bar + crosshair/rect). On GNOME uses fullscreen click-through fallback (Mutter has no layer-shell).
+
+```bash
+# disable UI, keep stderr log only
+BOT_OVERLAY=0 python3 -m spike --raise-only "focus files"
+```
 
 ## Silvio findings absorbed
 

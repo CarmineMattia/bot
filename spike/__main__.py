@@ -2,7 +2,7 @@
 
 Implements docs/gui-loop.md success criteria with:
 - stub planner (no LLM)
-- null overlay (stderr / log line)
+- overlay (GTK UI + stderr log; BOT_OVERLAY=0 disables UI)
 - ensure target in AT-SPI tree, then Activate / default.activate
 - observe requires an ACTIVE *transition* (Silvio: already-focused ≠ proof)
 
@@ -157,10 +157,23 @@ def run_turn(user_text: str, pause_ms: int = 400, *, raise_only: bool = False) -
         print(json.dumps(result, indent=2))
         return result
 
-    overlay.show({"status": announce, "phase": "announce", "pause_ms": pause_ms})
+    overlay.show(
+        {
+            "status": announce,
+            "phase": "announce",
+            "pause_ms": pause_ms,
+            "target": a11y.target_hint_for_step(step),
+        }
+    )
     time.sleep(pause_ms / 1000.0)
 
-    overlay.show({"status": announce, "phase": "acting"})
+    overlay.show(
+        {
+            "status": announce,
+            "phase": "acting",
+            "target": a11y.target_hint_for_step(step),
+        }
+    )
     act_info = act.perform(step, raise_only=raise_only)
     act_err = act_info.get("error")
     time.sleep(0.5)

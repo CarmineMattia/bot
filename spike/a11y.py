@@ -231,6 +231,37 @@ def changed(pre: dict[str, Any], post: dict[str, Any], step: dict[str, Any]) -> 
     return target_active(post, app_id)
 
 
+def target_hint_for_step(step: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Best-effort AT-SPI frame rect for FocusWindow (may be 0,0 on Wayland)."""
+    if not step or step.get("type") != "FocusWindow":
+        return None
+    app_id = step.get("app_id") or ""
+    try:
+        Atspi = _init_atspi()
+        desk = Atspi.get_desktop(0)
+        for i in range(desk.get_child_count()):
+            app = desk.get_child_at_index(i)
+            if not app or not app_match(app.get_name() or "", app_id):
+                continue
+            for j in range(app.get_child_count()):
+                fr = app.get_child_at_index(j)
+                if not fr or fr.get_role_name() not in {"frame", "window"}:
+                    continue
+                e = fr.get_extents(Atspi.CoordType.SCREEN)
+                if e.width <= 1 or e.height <= 1:
+                    continue
+                return {
+                    "kind": "rect",
+                    "x": int(e.x),
+                    "y": int(e.y),
+                    "w": int(e.width),
+                    "h": int(e.height),
+                }
+    except Exception:
+        return None
+    return None
+
+
 def wait_until_in_tree(app_id: str, timeout_s: float = 8.0) -> dict[str, Any]:
     """Poll AT-SPI until app frames appear or timeout."""
     deadline = time.time() + timeout_s

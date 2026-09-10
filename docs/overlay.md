@@ -53,8 +53,9 @@ Same coordinate space as [gui-loop.md](gui-loop.md) `ClickPoint` / a11y bounds f
 
 ## v1 implementation notes (not locked)
 
-- Wayland: layer-shell / always-on-top surface preferred.
-- Until UI exists, a **null overlay** that prints `OverlayShow` as one log line still satisfies the GUI-loop spike.
+- Wayland: prefer **Gtk4LayerShell** (`zwlr_layer_shell`) when the compositor supports it.
+- **GNOME Mutter** does not expose layer-shell → spike uses a fullscreen transparent click-through window (`spike/overlay_server.py`).
+- Spike always mirrors `OverlayShow` / `OverlayClear` to stderr; set `BOT_OVERLAY=0` to disable the UI process.
 - No screenshots drawn inside the overlay for v1 — status + target only.
 
 ## Non-goals

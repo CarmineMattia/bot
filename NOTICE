@@ -1,0 +1,13 @@
+This repository is licensed under Apache-2.0.
+
+Third-party components keep their own licenses when used:
+- llama.cpp — MIT
+- Open Interpreter — Apache-2.0
+- Qwen models (Alibaba) — Apache-2.0 (or Alibaba open terms for the release used)
+- HauhauCS GGUF derivatives — see the Hugging Face model card; verify before redistribution
+- faster-whisper / Whisper — MIT
+- Kokoro TTS — MIT
+- oh-my-pi (omp) — see the upstream repository license
+
+Do not brand this product as "Astra", "Codex", or "Open Interpreter".
+Do not present a HauhauCS (or other) uncensored fine-tune as official Alibaba weights.

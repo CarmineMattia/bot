@@ -11,6 +11,8 @@ Design-first. Code starts only against these contracts.
 | [policy.md](policy.md) | auto / ask / deny |
 | [adapters.md](adapters.md) | Linux Wayland first; Win later |
 | [notes.md](notes.md) | What we discarded and why |
+| [CONVERSATION.md](CONVERSATION.md) | Recap del filo di design (memoria) |
+| [OPEN_QUESTIONS.md](OPEN_QUESTIONS.md) | GNOME/KDE + caveat mmproj/MTP |
 
 ## Build order
 

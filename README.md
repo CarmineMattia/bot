@@ -18,3 +18,5 @@ Bosgame M5 — Ryzen AI Max+ 395, Radeon 8060S, 128 GB unified memory.
 ## License
 
 Apache-2.0 for this repo. Third-party pieces keep their own licenses.
+
+Third-party notices: see [`NOTICE`](NOTICE).

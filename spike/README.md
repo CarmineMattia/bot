@@ -4,12 +4,12 @@ Throwaway-quality driver that exercises [docs/gui-loop.md](../docs/gui-loop.md) 
 
 ## What it does
 
-1. Stub-plans `FocusWindow` (`terminal` / `files` / `editor`)
+1. Stub-plans `FocusWindow` / `TypeText` / `ClickA11y`
 2. Announce via overlay (status bar + crosshair/rect) before act; also logged on stderr
-3. Ensure target is in AT-SPI tree (launch/rebind only if **zero** frames)
-4. Try D-Bus Activate + AT-SPI `default.activate`
-5. If still not ACTIVE: **raise via GNOME Overview** (`ydotool` Super → type → Enter)
-6. `ok` only on ACTIVE transition with **stable frame count**
+3. Ensure FocusWindow target is in AT-SPI tree (launch/rebind only if **zero** frames)
+4. Act: Activate / Overview raise / type / a11y-click
+5. `ok` for FocusWindow only on ACTIVE transition with **stable frame count**
+6. `ok` for TypeText if editable focused + ydotool typed; ClickA11y if target found + action/click
 
 ## Setup (once per session)
 
@@ -42,6 +42,18 @@ python3 -m spike --raise-only "focus the terminal"
 `--raise-only` never launches. If frames are 0 → immediate `stop`.
 
 **Pass for Silvio:** ACTIVE Files↔Terminal transitions, frame counts stay at baseline (no growth from monitor start).
+
+## Type / Click (after a window is focused)
+
+```bash
+export YDOTOOL_SOCKET="$XDG_RUNTIME_DIR/.ydotool_socket"
+# focus a terminal first, then:
+python3 -m spike "type echo bot-spike-ok"
+python3 -m spike "type echo bot-spike-ok and enter"
+python3 -m spike "click New Tab"
+```
+
+Policy: destructive click names (`Delete`, `Send`, …) → `need_confirm` (ask).
 
 ## Overlay UI
 

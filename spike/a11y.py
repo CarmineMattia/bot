@@ -232,8 +232,37 @@ def changed(pre: dict[str, Any], post: dict[str, Any], step: dict[str, Any]) -> 
 
 
 def target_hint_for_step(step: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Best-effort AT-SPI frame rect for FocusWindow (may be 0,0 on Wayland)."""
-    if not step or step.get("type") != "FocusWindow":
+    """Best-effort AT-SPI frame/control rect for overlay."""
+    if not step:
+        return None
+    stype = step.get("type")
+    if stype == "ClickA11y":
+        hit = find_a11y_target(
+            role=str(step.get("role") or ""),
+            name=str(step.get("name") or ""),
+            window=step.get("window"),
+        )
+        if not hit:
+            return None
+        return {
+            "kind": "rect",
+            "x": hit["x"],
+            "y": hit["y"],
+            "w": hit["w"],
+            "h": hit["h"],
+        }
+    if stype == "TypeText":
+        foc = type_target()
+        if foc and foc.get("w", 0) > 1:
+            return {
+                "kind": "rect",
+                "x": foc["x"],
+                "y": foc["y"],
+                "w": foc["w"],
+                "h": foc["h"],
+            }
+        return None
+    if stype != "FocusWindow":
         return None
     app_id = step.get("app_id") or ""
     try:
@@ -260,6 +289,236 @@ def target_hint_for_step(step: dict[str, Any] | None) -> dict[str, Any] | None:
     except Exception:
         return None
     return None
+
+
+EDITABLE_ROLES = {
+    "entry",
+    "password text",
+    "text",
+    "terminal",
+    "document text",
+    "edit bar",
+    "combo box",
+}
+
+# Apps that accept keyboard input even when AT-SPI hides the editable child
+# (Ptyxis often exposes only frame → panel).
+TYPEABLE_APP_HINTS = (
+    ("ptyxis", "terminal"),
+    ("org.gnome.texteditor", "document text"),
+    ("gnome-text-editor", "document text"),
+    ("gedit", "document text"),
+    ("firefox", "entry"),
+    ("chrom", "entry"),
+)
+
+
+def type_target() -> dict[str, Any] | None:
+    """Best place to type: focused editable, else ACTIVE typeable app frame."""
+    foc = focused_editable()
+    if foc:
+        return foc
+    obs = observe()
+    for fr in obs.get("frames") or []:
+        flags = fr.get("flags") or []
+        if "ACTIVE" not in flags:
+            continue
+        app = str(fr.get("app_id") or "")
+        al = app.lower().replace(".", "")
+        for hint, role in TYPEABLE_APP_HINTS:
+            hl = hint.lower().replace(".", "")
+            if hl in al or al in hl:
+                return {
+                    "app_id": app,
+                    "role": role,
+                    "name": fr.get("title") or "",
+                    "x": 0,
+                    "y": 0,
+                    "w": 0,
+                    "h": 0,
+                    "synthetic": True,
+                }
+    return None
+
+
+def focused_editable() -> dict[str, Any] | None:
+    """Return focused editable node + extents, or None."""
+    try:
+        Atspi = _init_atspi()
+        desk = Atspi.get_desktop(0)
+    except Exception:
+        return None
+
+    found: dict[str, Any] | None = None
+
+    def walk(obj, app_name: str, depth: int = 0) -> None:
+        nonlocal found
+        if found is not None or obj is None or depth > 10:
+            return
+        try:
+            role = (obj.get_role_name() or "").lower()
+            st = obj.get_state_set()
+            if (
+                role in EDITABLE_ROLES
+                and st
+                and st.contains(Atspi.StateType.FOCUSED)
+                and (app_name or "").lower() != "gnome-shell"
+            ):
+                e = obj.get_extents(Atspi.CoordType.SCREEN)
+                found = {
+                    "app_id": app_name,
+                    "role": role,
+                    "name": obj.get_name() or "",
+                    "x": int(e.x),
+                    "y": int(e.y),
+                    "w": int(e.width),
+                    "h": int(e.height),
+                }
+                return
+        except Exception:
+            pass
+        try:
+            n = obj.get_child_count()
+        except Exception:
+            return
+        for i in range(min(n, 40 if depth < 2 else 20)):
+            try:
+                walk(obj.get_child_at_index(i), app_name, depth + 1)
+            except Exception:
+                pass
+
+    for i in range(desk.get_child_count()):
+        app = desk.get_child_at_index(i)
+        if not app:
+            continue
+        walk(app, app.get_name() or "?", 0)
+        if found:
+            break
+    return found
+
+
+def find_a11y_target(
+    *,
+    role: str,
+    name: str,
+    window: str | None = None,
+) -> dict[str, Any] | None:
+    """Find first SHOWING control matching role+name (case-insensitive substring)."""
+    role_l = (role or "").lower().strip()
+    name_l = (name or "").lower().strip()
+    if not role_l or not name_l:
+        return None
+    try:
+        Atspi = _init_atspi()
+        desk = Atspi.get_desktop(0)
+    except Exception:
+        return None
+
+    hits: list[dict[str, Any]] = []
+
+    def walk(obj, app_name: str, depth: int = 0) -> None:
+        if obj is None or depth > 12:
+            return
+        try:
+            r = (obj.get_role_name() or "").lower()
+            n = (obj.get_name() or "").lower()
+            st = obj.get_state_set()
+            showing = bool(st and st.contains(Atspi.StateType.SHOWING))
+            if (
+                showing
+                and (app_name or "").lower() != "gnome-shell"
+                and role_l in r
+                and name_l in n
+            ):
+                e = obj.get_extents(Atspi.CoordType.SCREEN)
+                if e.width > 1 and e.height > 1:
+                    hits.append(
+                        {
+                            "app_id": app_name,
+                            "role": r,
+                            "name": obj.get_name() or "",
+                            "x": int(e.x),
+                            "y": int(e.y),
+                            "w": int(e.width),
+                            "h": int(e.height),
+                            "cx": int(e.x + e.width / 2),
+                            "cy": int(e.y + e.height / 2),
+                            "_obj": obj,
+                        }
+                    )
+        except Exception:
+            pass
+        try:
+            nch = obj.get_child_count()
+        except Exception:
+            return
+        for i in range(min(nch, 50 if depth < 2 else 25)):
+            try:
+                walk(obj.get_child_at_index(i), app_name, depth + 1)
+            except Exception:
+                pass
+
+    for i in range(desk.get_child_count()):
+        app = desk.get_child_at_index(i)
+        if not app:
+            continue
+        walk(app, app.get_name() or "?", 0)
+
+    if window:
+        w = window.lower()
+        filtered = [
+            h
+            for h in hits
+            if w in (h.get("app_id") or "").lower() or w in (h.get("name") or "").lower()
+        ]
+        if filtered:
+            hits = filtered
+
+    if not hits:
+        return None
+    hits.sort(
+        key=lambda h: (
+            0 if h["name"].lower() == name_l else 1,
+            h["w"] * h["h"],
+        )
+    )
+    return hits[0]
+
+
+def try_a11y_click(obj) -> bool:  # noqa: ANN001
+    """Invoke click/press/activate action on an AT-SPI node if present."""
+    try:
+        ai = obj.get_action_iface()
+        if not ai:
+            return False
+        prefer = ("click", "press", "activate", "default.activate", "Jump")
+        names = []
+        for k in range(ai.get_n_actions()):
+            try:
+                names.append(ai.get_action_name(k) or "")
+            except Exception:
+                names.append("")
+        idx = None
+        for want in prefer:
+            for k, nm in enumerate(names):
+                if nm.lower() == want.lower() or want.lower() in nm.lower():
+                    idx = k
+                    break
+            if idx is not None:
+                break
+        if idx is None and names:
+            idx = 0
+        if idx is None:
+            return False
+        return bool(ai.do_action(idx))
+    except Exception:
+        return False
+
+
+def fingerprint_delta(pre: dict[str, Any], post: dict[str, Any]) -> bool:
+    return (pre.get("fingerprint") or "") != (post.get("fingerprint") or "") or (
+        pre.get("summary") or ""
+    ) != (post.get("summary") or "")
 
 
 def wait_until_in_tree(app_id: str, timeout_s: float = 8.0) -> dict[str, Any]:

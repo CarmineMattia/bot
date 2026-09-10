@@ -202,6 +202,89 @@ def _activate_atspi(app_id: str) -> str | None:
 
 
 def perform(step: dict[str, Any], *, raise_only: bool = False) -> dict[str, Any]:
+    """Dispatch GuiStep. Returns actuation info dict with optional error."""
+    stype = step.get("type")
+    if stype == "FocusWindow":
+        return _perform_focus(step, raise_only=raise_only)
+    if stype == "TypeText":
+        return _perform_type(step)
+    if stype == "ClickA11y":
+        return _perform_click_a11y(step)
+    return {
+        "error": f"unsupported step type: {stype}",
+        "frames_before": 0,
+        "frames_after": 0,
+    }
+
+
+def _perform_type(step: dict[str, Any]) -> dict[str, Any]:
+    from . import ydo
+
+    text = step.get("text")
+    if text is None or text == "":
+        return {"error": "TypeText missing text", "method": "type"}
+    submit = bool(step.get("submit"))
+    foc = a11y.type_target()
+    if not foc:
+        return {
+            "error": "no typeable target (focus a terminal/editor first)",
+            "method": "type",
+            "focused": None,
+        }
+    err = ydo.type_text(str(text))
+    if err:
+        return {"error": err, "method": "type", "focused": foc}
+    if submit:
+        time.sleep(0.08)
+        enter_err = ydo.key_enter()
+        if enter_err:
+            return {"error": enter_err, "method": "type+enter", "focused": foc, "typed": True}
+    return {
+        "error": None,
+        "method": "type+enter" if submit else "type",
+        "focused": {k: v for k, v in foc.items() if k != "_obj"},
+        "typed": True,
+        "submit": submit,
+        "text_len": len(str(text)),
+    }
+
+
+def _perform_click_a11y(step: dict[str, Any]) -> dict[str, Any]:
+    from . import ydo
+
+    role = str(step.get("role") or "")
+    name = str(step.get("name") or "")
+    hit = a11y.find_a11y_target(role=role, name=name, window=step.get("window"))
+    if not hit:
+        return {
+            "error": f"ClickA11y target not found: role={role!r} name={name!r}",
+            "method": "click_a11y",
+        }
+    obj = hit.get("_obj")
+    method = "a11y_action"
+    if obj is not None and a11y.try_a11y_click(obj):
+        time.sleep(0.2)
+        return {
+            "error": None,
+            "method": method,
+            "target": {k: v for k, v in hit.items() if k != "_obj"},
+        }
+    # Fallback: absolute click (needs disabled mouse accel for accuracy).
+    err = ydo.click_abs(int(hit["cx"]), int(hit["cy"]))
+    if err:
+        return {
+            "error": err,
+            "method": "ydotool_click",
+            "target": {k: v for k, v in hit.items() if k != "_obj"},
+        }
+    return {
+        "error": None,
+        "method": "ydotool_click",
+        "target": {k: v for k, v in hit.items() if k != "_obj"},
+    }
+
+
+def _perform_focus(step: dict[str, Any], *, raise_only: bool = False) -> dict[str, Any]:
     """Run FocusWindow. Returns {error, frames_before, frames_after, ...}.
 
     When frames already exist: Activate/AT-SPI, then **overview raise via ydotool**
@@ -210,12 +293,6 @@ def perform(step: dict[str, Any], *, raise_only: bool = False) -> dict[str, Any]
     raise_only=True: never launch/rebind; require frames already present
     (Silvio protocol: baseline must be stable before the run).
     """
-    if step.get("type") != "FocusWindow":
-        return {
-            "error": f"unsupported step type: {step.get('type')}",
-            "frames_before": 0,
-            "frames_after": 0,
-        }
     app_id = step.get("app_id")
     if not app_id:
         return {"error": "FocusWindow missing app_id", "frames_before": 0, "frames_after": 0}

@@ -14,6 +14,7 @@
 - Aggressive MTP: serve la build / sidecar documentata dalla quant (es. FastMTP); non reclamare speedup da un `llama-server` vanilla.
 - Whisper + Kokoro nominati accanto a un esecutore ≠ loop vocale finché non sono sul bordo dello stesso turn.
 - **GNOME Wayland focus-steal:** raise existing windows via Overview + `ydotool` (Super → query → Enter). Do not use `--new-window` for FocusWindow. Requires `ydotoold`.
+- **Ptyxis a11y:** often exposes only frame→panel; TypeText uses ACTIVE typeable-app fallback when no FOCUSED editable node exists.
 
 ## Closed (non riaprire senza motivo)
 

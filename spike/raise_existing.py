@@ -8,12 +8,10 @@ Requires `ydotoold` (uinput) and `YDOTOOL_SOCKET` (default ~/.ydotool path).
 
 from __future__ import annotations
 
-import os
-import subprocess
 import time
 from typing import Any
 
-from . import a11y
+from . import a11y, ydo
 
 # Overview search strings that resolve to a running app (not "New Window").
 OVERVIEW_QUERY = {
@@ -21,10 +19,6 @@ OVERVIEW_QUERY = {
     "org.gnome.Nautilus": "Files",
     "org.gnome.TextEditor": "Text Editor",
 }
-
-DEFAULT_SOCKET = os.path.expanduser("~/.ydotool_socket")
-# Prefer XDG runtime if present (what we start in sessions).
-RUNTIME_SOCKET = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), ".ydotool_socket")
 
 
 def _frame_count(obs: dict[str, Any], app_id: str) -> int:
@@ -35,59 +29,12 @@ def _frame_count(obs: dict[str, Any], app_id: str) -> int:
     )
 
 
-def _socket_path() -> str:
-    env = os.environ.get("YDOTOOL_SOCKET")
-    if env:
-        return env
-    if os.path.exists(RUNTIME_SOCKET):
-        return RUNTIME_SOCKET
-    return DEFAULT_SOCKET
-
-
 def ensure_ydotoold() -> str | None:
-    """Return error or None. Starts user ydotoold if socket missing."""
-    sock = _socket_path()
-    os.environ["YDOTOOL_SOCKET"] = sock
-    if os.path.exists(sock):
-        return None
-    # Try start daemon (user ACL on /dev/uinput required)
-    try:
-        subprocess.Popen(
-            ["ydotoold", "-p", sock, "-P", "0666"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except FileNotFoundError:
-        return "ydotool/ydotoold not installed (dnf install ydotool)"
-    except Exception as e:
-        return f"failed to start ydotoold: {e}"
-    for _ in range(20):
-        if os.path.exists(sock):
-            return None
-        time.sleep(0.1)
-    return f"ydotoold socket not ready: {sock}"
+    return ydo.ensure_ydotoold()
 
 
 def _ydo(*args: str) -> str | None:
-    env = os.environ.copy()
-    env["YDOTOOL_SOCKET"] = _socket_path()
-    try:
-        r = subprocess.run(
-            ["ydotool", *args],
-            capture_output=True,
-            text=True,
-            env=env,
-            timeout=10,
-        )
-    except FileNotFoundError:
-        return "ydotool not installed"
-    except Exception as e:
-        return str(e)
-    if r.returncode != 0:
-        return (r.stderr or r.stdout or f"ydotool exit {r.returncode}").strip()
-    return None
-
+    return ydo.run(*args)
 
 def _overview_showing() -> bool:
     try:

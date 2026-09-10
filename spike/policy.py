@@ -80,6 +80,9 @@ def _dangerous_typed_text(text: Any) -> bool:
 
 
 def decide(step: dict[str, Any]) -> Decision:
+    if step.get("requires_confirmation"):
+        return "ask"
+
     t = step.get("type")
     if t == "Talk":
         return "auto"

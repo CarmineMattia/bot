@@ -64,5 +64,26 @@ class VoiceSttTests(unittest.TestCase):
         self.assertIn("STT unavailable", str(ctx.exception))
 
 
+class VoiceListenTests(unittest.TestCase):
+    def test_generated_wav_fd_closed_and_file_removed_on_transcribe_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            keep = Path(tmp) / "bot-utterance-test.wav"
+
+            def fake_record(path: Path, **_kwargs) -> Path:
+                path.write_bytes(b"wav")
+                return path
+
+            with patch("spike.voice.record_wav", side_effect=fake_record), patch(
+                "spike.voice.tempfile.mkstemp", return_value=(37, str(keep))
+            ), patch("spike.voice.os.close") as close, patch(
+                "spike.voice.transcribe", side_effect=voice.VoiceError("failed")
+            ):
+                with self.assertRaises(voice.VoiceError):
+                    voice.listen()
+
+            close.assert_any_call(37)
+            self.assertFalse(keep.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

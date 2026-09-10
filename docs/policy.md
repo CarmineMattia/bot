@@ -70,6 +70,11 @@ Examples:
 
 - Prefer targeting by accessibility id/name/role over raw pixel click when available.
 - Pixel click only when the tree is missing; then verify with observation.
+- Typing shell-sensitive text (`rm`, `sudo`, `passwd`, or `curl`) requires
+  confirmation even without Enter because a later gesture can submit it.
+- Generic affirmative/dismissive dialog controls (for example “OK”, “Yes”,
+  “Accept”, “Continue”, “Sign in”, and “Close”) require confirmation. Known
+  reversible navigation targets such as “New Tab” remain automatic.
 - `--os`-style executors that auto-run code without confirm **must** sit behind this policy gate. Never point an uncensored model at auto_run and call that “done.”
 
 ## Operator controls

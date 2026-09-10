@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 
@@ -31,7 +32,51 @@ ASK_NAME_HINTS = (
     "allow",
     "grant",
     "password",
+    # Dialog affirmatives can commit or dismiss state even when their labels are
+    # generic. Keep obviously navigational demo targets (for example New Tab)
+    # automatic, but require confirmation for these affirmative verbs.
+    "accept",
+    "continue",
+    "proceed",
+    "agree",
+    "approve",
+    "authorize",
+    "sign in",
+    "signin",
+    "log in",
+    "login",
+    "got it",
 )
+
+ASK_EXACT_NAMES = {
+    "ok",
+    "okay",
+    "yes",
+    "done",
+    "close",
+    "dismiss",
+}
+
+DANGEROUS_TEXT_RE = re.compile(r"(?<![\w-])(?:rm|sudo|passwd|curl)(?![\w-])", re.IGNORECASE)
+SHELL_EVALUATION_RE = re.compile(r"\$\{|\$\(|`")
+
+
+def _normalized_name(name: Any) -> str:
+    return " ".join(str(name or "").lower().replace("-", " ").split())
+
+
+def _dangerous_typed_text(text: Any) -> bool:
+    # Shell concatenates quoted and backslash-escaped token fragments, so scan a
+    # dequoted form too (for example cu''rl or c$''url). Parameter/command
+    # expansion is itself gated because it can reconstruct or execute a command
+    # that is not statically visible here.
+    raw = str(text or "")
+    dequoted = re.sub(r"""['"\\$]""", "", raw)
+    return bool(
+        SHELL_EVALUATION_RE.search(raw)
+        or DANGEROUS_TEXT_RE.search(raw)
+        or DANGEROUS_TEXT_RE.search(dequoted)
+    )
 
 
 def decide(step: dict[str, Any]) -> Decision:
@@ -43,13 +88,14 @@ def decide(step: dict[str, Any]) -> Decision:
     if t == "FocusWindow":
         return "auto"
     if t == "TypeText":
-        text = str(step.get("text") or "").lower()
-        if step.get("submit") and any(h in text for h in ("rm ", "sudo", "passwd", "curl ")):
+        # Staging a dangerous command is itself sensitive: the user (or another
+        # turn) can submit it later, so submit=False must not bypass policy.
+        if _dangerous_typed_text(step.get("text")):
             return "ask"
         return "auto"
     if t == "ClickA11y":
-        name = str(step.get("name") or "").lower()
-        if any(h in name for h in ASK_NAME_HINTS):
+        name = _normalized_name(step.get("name"))
+        if name in ASK_EXACT_NAMES or any(h in name for h in ASK_NAME_HINTS):
             return "ask"
         return "auto"
     if t == "Hotkey":

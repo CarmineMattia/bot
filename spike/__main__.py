@@ -578,45 +578,27 @@ def run_turn(
             reply = f"Hotkey failed: {act_err}"
             overlay.show({"status": reply, "phase": "failed"})
         else:
+            # An error-free chord delivery is the actuation proof. AT-SPI often
+            # omits tab/chrome changes, so retrying on a missing fingerprint
+            # delta would send the same chord twice in one turn.
             transition = a11y.fingerprint_delta(pre, post)
-            if not transition:
-                retried = True
-                act_info, post = _retry_same(
-                    step,
-                    announce=announce,
-                    pause_ms=pause_ms,
-                    raise_only=raise_only,
-                    pre=pre,
-                )
-                act_err = act_info.get("error")
-                transition = (not act_err) and a11y.fingerprint_delta(pre, post)
             keys = "+".join(str(k) for k in (step.get("keys") or []))
             foc = act_info.get("focused_before") or {}
-            if act_err:
-                outcome = "stop"
-                reply = f"Hotkey failed: {act_err}"
-                overlay.show({"status": reply, "phase": "failed"})
-            elif transition:
-                outcome = "ok"
+            outcome = "ok"
+            if transition:
                 reply = (
-                    f"Hotkey {keys} via {act_info.get('method')}"
-                    f"{' after retry' if retried else ''} "
+                    f"Hotkey {keys} via {act_info.get('method')} "
                     f"on {foc.get('app_id')}:{foc.get('title') or foc.get('name')} "
                     f"(a11y_delta=True)."
                 )
-                overlay.show({"status": "done", "phase": "done"})
             else:
-                # Ptyxis/etc often hide tab chrome from AT-SPI — chord delivered,
-                # one soft retry done, accept as trusted with changed=false.
-                outcome = "ok"
                 transition = False
                 reply = (
-                    f"Hotkey {keys} via {act_info.get('method')}"
-                    f"{' after retry' if retried else ''} "
+                    f"Hotkey {keys} via {act_info.get('method')} "
                     f"on {foc.get('app_id')}:{foc.get('title') or foc.get('name')} "
                     f"(a11y_delta=False; chord trusted)."
                 )
-                overlay.show({"status": "done", "phase": "done"})
+            overlay.show({"status": "done", "phase": "done"})
 
     else:
         outcome = "stop"

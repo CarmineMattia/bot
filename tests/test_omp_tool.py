@@ -15,6 +15,13 @@ driver = importlib.import_module("spike.__main__")
 
 
 class CodeTaskPlannerPolicyTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {"BOT_BRAIN": "0"}, clear=False)
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
+
     def test_code_phrase_plans_one_workspace_scoped_task(self) -> None:
         workspace = Path("/tmp/example-repo")
         self.assertEqual(
@@ -174,6 +181,13 @@ class OmpToolTests(unittest.TestCase):
 
 
 class CodeTaskTurnTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._env = patch.dict(os.environ, {"BOT_BRAIN": "0"}, clear=False)
+        self._env.start()
+
+    def tearDown(self) -> None:
+        self._env.stop()
+
     def test_confirmed_write_task_passes_gate_once(self) -> None:
         omp_result = {
             "error": None,

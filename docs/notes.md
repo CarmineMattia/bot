@@ -40,7 +40,6 @@ Compressed decisions. Full chat was exploratory and contradictory; this file kee
 2. **Spike:** `spike/` — FocusWindow raise-only via Overview+ydotool (frame count stable)
 3. Real overlay UI
 4. Policy gate (spike: `confirm.py` — ask waits for y/n / `--yes` / `--no`)
-5. omp wrapper
-6. Voice edge
-
-- **omp / CodeTask**: spike wraps `omp --print` once per turn behind policy ask + bwrap; not a GUI hand.
+5. omp wrapper (spike: `omp_tool.py` CodeTask + bwrap; done)
+6. Brain / llama.cpp planner (spike: `brain.py` OpenAI-compat + stub fallback; done)
+7. Voice edge (spike: `voice.py` — espeak TTS + optional Whisper STT; push-to-talk CLI)

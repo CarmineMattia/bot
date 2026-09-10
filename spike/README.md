@@ -111,3 +111,34 @@ python3 -m spike --yes "omp add parser unit tests"
 ```
 
 Requires `omp` and `bwrap` on PATH. Workspace must be a git repo root. Runs one sandboxed non-interactive `omp --print` process.
+
+## Brain (optional LLM planner)
+
+By default the spike uses the **stub** phrases (`BOT_BRAIN` off). Opt in to an OpenAI-compatible server (llama.cpp `:8080` or Ollama `:11434`):
+
+```bash
+export BOT_BRAIN=1
+export BOT_LLM_BASE_URL=http://127.0.0.1:11434/v1   # or http://127.0.0.1:8080/v1
+export BOT_LLM_MODEL=qwen2.5:3b                      # ollama tag / llama model id
+python3 -m spike "focus the files app"
+# BOT_BRAIN=0 → force stub only
+```
+
+Invalid/unreachable brain → automatic stub fallback. Steps are allowlisted (Focus apps, Hotkey chord, CodeTask, Talk).
+
+## Voice edge (push-to-talk)
+
+Same turn cycle: mic → STT → plan/act → optional TTS of `user_reply`.
+
+```bash
+# TTS only (needs espeak-ng)
+python3 -m spike --speak --no "click Delete"
+
+# Record 4s, STT (needs openai-whisper), then run, then speak reply
+python3 -m spike --listen 4 --speak
+
+# Or STT an existing file
+python3 -m spike --listen-file ./utterance.wav --speak
+```
+
+`BOT_SPEAK=0` disables TTS. Full-duplex / VAD are out of v1.

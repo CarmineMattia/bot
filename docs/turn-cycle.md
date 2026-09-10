@@ -91,3 +91,5 @@ Do **not** keep a rolling gallery of full screenshots.
 ## Voice (later edge)
 
 Same cycle. Mic fills `INPUT`; TTS speaks the final reply and optionally the announce line. Push-to-talk first, then VAD. Fillers (“one moment”) are UX, not a second brain. Full-duplex is out of v1.
+
+Spike: `python3 -m spike --listen 4 --speak` (STT needs Whisper; TTS uses `espeak-ng`). `--listen-file` for offline wav. Not full-duplex.

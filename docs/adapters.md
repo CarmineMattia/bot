@@ -46,6 +46,8 @@ Same on all platforms: invoke `omp` with workspace + task; parse result; return 
 
 `llama.cpp` server (OpenAI-compatible HTTP). Model + optional mmproj configured by the operator. Conductor talks to one base URL.
 
+Spike: `spike/brain.py` — `BOT_LLM_BASE_URL` (default `http://127.0.0.1:8080/v1`), `BOT_LLM_MODEL`, `BOT_BRAIN=auto|1|0`. On failure falls back to the stub planner. Ollama’s `/v1` endpoint is a valid stand-in when llama-server is down.
+
 ## What adapters must not do
 
 - Own the turn loop

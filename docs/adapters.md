@@ -6,7 +6,7 @@ The turn cycle does not change per OS. Only the **GUI hand** and **perception** 
 
 1. **Linux Wayland** (primary) — Bosgame M5 day-to-day
 2. **Windows** native (later)
-3. **WSL** — fine for early coding/tooling experiments; **not** the real desktop target for GUI control (WSL does not own the Windows GUI the same way). Prefer native Linux for GUI spikes.
+3. **WSL** — brain (llama.cpp) only if needed; **never** for mouse/overlay/GUI. Native Linux (GNOME Wayland) owns the desktop adapter.
 
 ## Perception
 

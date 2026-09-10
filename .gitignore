@@ -1,0 +1,4 @@
+.spike_state.json
+__pycache__/
+*.pyc
+.Python

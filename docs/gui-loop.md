@@ -101,8 +101,9 @@ When we leave pure design, a spike is “done” if:
 1. From a CLI or tiny driver: send `user_text` like “focus the terminal”.
 2. Conductor (or a stub planner) emits a `FocusWindow` / `ClickA11y` step.
 3. Announce line appears **before** the focus changes.
-4. Observation reports `changed: true` with a focused-window summary.
-5. A second turn can use `last_observation` without pasting images into the prompt.
+4. Observation reports an **ACTIVE transition** on the target (`changed: true`): not already focused before the act. “Still Ptyxis because it was already Ptyxis” does **not** count.
+5. Target must be **in the AT-SPI tree** before it can become ACTIVE (launch/ensure if missing — e.g. Nautilus/Files).
+6. A second turn can use `last_observation` without pasting images into the prompt.
 
 Stub planner is OK for the spike (hardcoded mapping). Real model planning comes after the plumbing works.
 

@@ -1,10 +1,11 @@
 """Minimal GUI-loop spike for Linux (GNOME/Wayland first).
 
 Implements docs/gui-loop.md success criteria with:
-- stub planner (no LLM): FocusWindow | TypeText | ClickA11y
+- stub planner (no LLM): FocusWindow | TypeText | ClickA11y | Hotkey
 - overlay (GTK UI + stderr log; BOT_OVERLAY=0 disables UI)
 - FocusWindow: ensure target in AT-SPI tree, then Activate / overview raise
 - TypeText / ClickA11y: ydotool (+ AT-SPI action when possible)
+- Hotkey: explicit ydotool key chord (no ClickA11y fallback)
 - FocusWindow observe requires an ACTIVE *transition* (Silvio: already-focused ≠ proof)
 
 Run from a normal user session (Ptyxis):
@@ -13,6 +14,7 @@ Run from a normal user session (Ptyxis):
     python3 -m spike "focus the terminal"
     python3 -m spike "type echo bot-ok"
     python3 -m spike "click New Tab"
+    python3 -m spike "new tab"
 """
 
 from __future__ import annotations
@@ -88,7 +90,7 @@ def run_turn(user_text: str, pause_ms: int = 400, *, raise_only: bool = False) -
             "user_reply": (
                 "Stub planner does not understand: "
                 f"{user_text!r}. Try: focus terminal | focus files | "
-                "type hello | type hello and enter | click New Tab"
+                "type hello | type hello and enter | click New Tab | new tab"
             ),
         }
         print(json.dumps(result, indent=2))
@@ -273,6 +275,23 @@ def run_turn(user_text: str, pause_ms: int = 400, *, raise_only: bool = False) -
                 f"(a11y_delta={delta}; focus={post.get('summary')})."
             )
             overlay.show({"status": "done", "phase": "done"})
+
+    elif stype == "Hotkey":
+        if act_err:
+            outcome = "stop"
+            reply = f"Hotkey failed: {act_err}"
+            overlay.show({"status": reply, "phase": "failed"})
+        else:
+            # Chord actuation is trusted; optional a11y delta is informational only.
+            outcome = "ok"
+            keys = "+".join(str(k) for k in (step.get("keys") or []))
+            foc = act_info.get("focused_before") or {}
+            reply = (
+                f"Hotkey {keys} via {act_info.get('method')} "
+                f"on {foc.get('app_id')}:{foc.get('title') or foc.get('name')}."
+            )
+            overlay.show({"status": "done", "phase": "done"})
+
     else:
         outcome = "stop"
         reply = f"Unhandled step type: {stype}"

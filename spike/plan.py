@@ -39,6 +39,15 @@ KNOWN_CLICK: list[tuple[tuple[str, ...], dict[str, Any], str]] = [
     ),
 ]
 
+KNOWN_HOTKEY: list[tuple[tuple[str, ...], dict[str, Any], str]] = [
+    (
+        ("new tab", "open a new tab", "nuova scheda", "apri una nuova scheda"),
+        {"type": "Hotkey", "keys": ["ctrl", "shift", "t"]},
+        "Open a new Ptyxis tab (Ctrl+Shift+T)",
+    ),
+]
+
+
 
 def _parse_type(user_text: str) -> dict[str, Any] | None:
     t = user_text.strip()
@@ -126,6 +135,9 @@ def plan_gui_step(user_text: str) -> dict[str, Any] | None:
     if clicked:
         return clicked
     t = user_text.strip().lower()
+    for keys, step, _announce in KNOWN_HOTKEY:
+        if any(t == key for key in keys):
+            return dict(step)
     for keys, step, _announce in KNOWN_FOCUS:
         if any(k in t for k in keys):
             return dict(step)
@@ -144,6 +156,11 @@ def announce_for(step: dict[str, Any]) -> str:
             if known.get("name") == step.get("name") and known.get("role") == step.get("role"):
                 return announce
         return f"Click {step.get('role')} {step.get('name')!r}"
+    if stype == "Hotkey":
+        for _phrases, known, announce in KNOWN_HOTKEY:
+            if known.get("keys") == step.get("keys"):
+                return announce
+        return "Press " + "+".join(str(k) for k in (step.get("keys") or []))
     for _keys, known, announce in KNOWN_FOCUS:
         if known.get("app_id") == step.get("app_id") and known.get("type") == stype:
             return announce

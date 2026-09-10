@@ -7,6 +7,10 @@ from typing import Any, Literal
 
 Decision = Literal["auto", "ask", "deny"]
 
+AUTO_HOTKEYS = {
+    ("ctrl", "shift", "t"),  # Ptyxis: open a reversible new tab
+}
+
 # Names that imply irreversible / external actions → ask even for ClickA11y.
 ASK_NAME_HINTS = (
     "delete",
@@ -44,6 +48,9 @@ def decide(step: dict[str, Any]) -> Decision:
         if any(h in name for h in ASK_NAME_HINTS):
             return "ask"
         return "auto"
-    if t in {"ClickPoint", "Hotkey"}:
+    if t == "Hotkey":
+        keys = tuple(str(key).lower() for key in step.get("keys") or [])
+        return "auto" if keys in AUTO_HOTKEYS else "ask"
+    if t == "ClickPoint":
         return "ask"
     return "deny"

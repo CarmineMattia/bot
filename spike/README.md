@@ -4,10 +4,10 @@ Throwaway-quality driver that exercises [docs/gui-loop.md](../docs/gui-loop.md) 
 
 ## What it does
 
-1. Stub-plans `FocusWindow` / `TypeText` / `ClickA11y`
+1. Stub-plans `FocusWindow` / `TypeText` / `ClickA11y` / `Hotkey`
 2. Announce via overlay (status bar + crosshair/rect) before act; also logged on stderr
 3. Ensure FocusWindow target is in AT-SPI tree (launch/rebind only if **zero** frames)
-4. Act: Activate / Overview raise / type / a11y-click
+4. Act: Activate / Overview raise / type / a11y-click / explicit key chord
 5. `ok` for FocusWindow only on ACTIVE transition with **stable frame count**
 6. `ok` for TypeText if editable focused + ydotool typed; ClickA11y if target found + action/click
 
@@ -52,6 +52,20 @@ python3 -m spike "type echo bot-spike-ok"
 python3 -m spike "type echo bot-spike-ok and enter"
 python3 -m spike "click New Tab"
 ```
+
+
+### Ptyxis New Tab via Hotkey
+
+Focus Ptyxis first, then run:
+
+```bash
+python3 -m spike "new tab"
+```
+
+The planner emits the explicit step
+`{"type":"Hotkey","keys":["ctrl","shift","t"]}` and sends that chord through
+ydotool. It does **not** retry as `ClickA11y` or invent a silent fallback.
+`click New Tab` remains the a11y-click path (and will still fail if AT-SPI has no button).
 
 Policy: destructive click names (`Delete`, `Send`, …) → `need_confirm` (ask).
 

@@ -210,6 +210,8 @@ def perform(step: dict[str, Any], *, raise_only: bool = False) -> dict[str, Any]
         return _perform_type(step)
     if stype == "ClickA11y":
         return _perform_click_a11y(step)
+    if stype == "Hotkey":
+        return _perform_hotkey(step)
     return {
         "error": f"unsupported step type: {stype}",
         "frames_before": 0,
@@ -246,6 +248,30 @@ def _perform_type(step: dict[str, Any]) -> dict[str, Any]:
         "typed": True,
         "submit": submit,
         "text_len": len(str(text)),
+    }
+
+
+
+
+def _perform_hotkey(step: dict[str, Any]) -> dict[str, Any]:
+    from . import ydo
+
+    keys = step.get("keys")
+    if not isinstance(keys, list):
+        return {"error": "Hotkey keys must be a list", "method": "hotkey"}
+    focused = a11y.observe().get("focused")
+    if not focused:
+        return {
+            "error": "no focused application for Hotkey",
+            "method": "hotkey",
+            "keys": keys,
+        }
+    err = ydo.hotkey(keys)
+    return {
+        "error": err,
+        "method": "ydotool_key",
+        "keys": keys,
+        "focused_before": focused,
     }
 
 

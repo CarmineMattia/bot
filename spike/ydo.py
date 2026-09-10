@@ -9,6 +9,26 @@ import time
 DEFAULT_SOCKET = os.path.expanduser("~/.ydotool_socket")
 RUNTIME_SOCKET = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), ".ydotool_socket")
 
+KEY_CODES = {
+    **{chr(ord("a") + i): code for i, code in enumerate(
+        (30, 48, 46, 32, 18, 33, 34, 35, 23, 36, 37, 38, 50, 49, 24, 25, 16, 19, 31, 20, 22, 47, 17, 45, 21, 44)
+    )},
+    **{str(i): code for i, code in enumerate((11, 2, 3, 4, 5, 6, 7, 8, 9, 10))},
+    "ctrl": 29,
+    "control": 29,
+    "shift": 42,
+    "alt": 56,
+    "super": 125,
+    "meta": 125,
+    "enter": 28,
+    "tab": 15,
+    "esc": 1,
+    "escape": 1,
+    "space": 57,
+    "f4": 62,
+}
+
+
 
 def socket_path() -> str:
     env = os.environ.get("YDOTOOL_SOCKET")
@@ -87,3 +107,20 @@ def click_abs(x: int, y: int) -> str | None:
     time.sleep(0.05)
     # 0xC0 = left down+up (0x00 | 0x40 down bit pattern used by ydotool click)
     return run("click", "0xC0")
+
+def hotkey(keys: list[str]) -> str | None:
+    """Press a key chord using Linux input-event key codes."""
+    normalized = [str(key).strip().lower() for key in keys]
+    if len(normalized) < 2:
+        return "Hotkey requires at least two keys"
+    if len(set(normalized)) != len(normalized):
+        return "Hotkey contains duplicate keys"
+    unknown = [key for key in normalized if key not in KEY_CODES]
+    if unknown:
+        return f"Unknown hotkey keys: {', '.join(unknown)}"
+    codes = [KEY_CODES[key] for key in normalized]
+    # press modifiers+key down then up in reverse
+    downs = [f"{c}:1" for c in codes]
+    ups = [f"{c}:0" for c in reversed(codes)]
+    return run("key", *downs, *ups)
+

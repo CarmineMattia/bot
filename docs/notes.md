@@ -42,3 +42,5 @@ Compressed decisions. Full chat was exploratory and contradictory; this file kee
 4. Policy gate (spike: `confirm.py` — ask waits for y/n / `--yes` / `--no`)
 5. omp wrapper
 6. Voice edge
+
+- **omp / CodeTask**: spike wraps `omp --print` once per turn behind policy ask + bwrap; not a GUI hand.

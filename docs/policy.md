@@ -54,6 +54,17 @@ Examples:
 - Treat omp as a **tool**: conductor passes a scoped task + workspace path; waits for outcome.
 - Repo writes from omp still respect the same classes (delete / push / secrets → ask).
 - Do not give omp a second unsupervised agent loop that can GUI-click around policy.
+- Spike policy is `ask` for every `CodeTask`, including reads: current omp
+  releases do not enforce a repository boundary for read tools.
+- Confirmation gates the whole single delegated task; this spike does not
+  intercept or approve individual nested omp tool calls.
+- The wrapper uses omp `--approval-mode write`, never `yolo`: confirmed file
+  edits can proceed, while executable tools retain omp's own approval gate and
+  fail closed in non-interactive mode.
+- A `bwrap` mount namespace makes the repository the only persistent writable
+  tree (`/tmp` is private); the wrapper fails closed without that containment.
+- Project extensions, skills, rules, LSPs, and executable tools are disabled;
+  the spike exposes only omp's read/search/edit/write built-ins.
 
 ## GUI path
 

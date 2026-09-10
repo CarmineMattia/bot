@@ -3,14 +3,18 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from spike import act, plan, policy, ydo
+from spike import act, plan, policy
 
 
 class HotkeyPlannerTests(unittest.TestCase):
     def test_new_tab_is_explicit_hotkey(self) -> None:
         self.assertEqual(
             plan.plan_gui_step("new tab"),
-            {"type": "Hotkey", "keys": ["ctrl", "shift", "t"]},
+            {
+                "type": "Hotkey",
+                "keys": ["ctrl", "shift", "t"],
+                "app_id": "org.gnome.Ptyxis",
+            },
         )
 
     def test_click_new_tab_remains_a11y_click(self) -> None:
@@ -41,10 +45,28 @@ class HotkeyPolicyTests(unittest.TestCase):
 
 class HotkeyActuationTests(unittest.TestCase):
     @patch("spike.ydo.hotkey", return_value=None)
-    @patch("spike.a11y.observe", return_value={"focused": {"app_id": "ptyxis", "title": "t"}})
+    @patch(
+        "spike.a11y.observe",
+        return_value={
+            "focused": {"app_id": "org.gnome.Ptyxis", "title": "t"},
+            "frames": [
+                {
+                    "app_id": "org.gnome.Ptyxis",
+                    "title": "t",
+                    "flags": ["ACTIVE"],
+                }
+            ],
+        },
+    )
     def test_perform_hotkey_uses_ydotool(self, _obs, hot) -> None:
-        result = act._perform_hotkey({"type": "Hotkey", "keys": ["ctrl", "shift", "t"]})
-        self.assertIsNone(result.get("error"))
+        result = act._perform_hotkey(
+            {
+                "type": "Hotkey",
+                "keys": ["ctrl", "shift", "t"],
+                "app_id": "org.gnome.Ptyxis",
+            }
+        )
+        self.assertIsNone(result.get("error"), result)
         self.assertEqual(result.get("method"), "ydotool_key")
         hot.assert_called_once_with(["ctrl", "shift", "t"])
 

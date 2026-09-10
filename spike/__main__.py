@@ -1,11 +1,12 @@
 """Minimal GUI-loop spike for Linux (GNOME/Wayland first).
 
 Implements docs/gui-loop.md success criteria with:
-- stub planner (no LLM): FocusWindow | TypeText | ClickA11y | Hotkey
+- stub planner (no LLM): FocusWindow | TypeText | ClickA11y | Hotkey | CodeTask
 - overlay (GTK UI + stderr log; BOT_OVERLAY=0 disables UI)
 - FocusWindow: ensure target in AT-SPI tree, then Activate / overview raise
 - TypeText / ClickA11y: ydotool (+ AT-SPI action when possible)
 - Hotkey: explicit ydotool key chord (no ClickA11y fallback)
+- CodeTask: one non-interactive omp invocation in the repository workspace
 - FocusWindow observe requires an ACTIVE *transition* (Silvio: already-focused ≠ proof)
 - Soft-fail: retry same step once when observe shows no meaningful delta
 
@@ -16,6 +17,7 @@ Run from a normal user session (Ptyxis):
     python3 -m spike "type echo bot-ok"
     python3 -m spike "click New Tab"
     python3 -m spike "new tab"
+    python3 -m spike "code explain README.md"
 """
 
 from __future__ import annotations
@@ -27,7 +29,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from . import a11y, act, confirm, overlay, plan, policy
+from . import a11y, act, confirm, omp_tool, overlay, plan, policy
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_PATH = ROOT / ".spike_state.json"
@@ -168,6 +170,103 @@ def _retry_same(
     return act_info, post
 
 
+
+def _run_code_task(
+    *,
+    step: dict[str, Any],
+    announce: str,
+    decision: str,
+    state: SpikeState,
+    pause_ms: int,
+    raise_only: bool,
+    user_confirm: str | None,
+) -> dict[str, Any]:
+    """Announce and execute exactly one omp process."""
+    overlay.show({"status": announce, "phase": "announce", "pause_ms": pause_ms})
+    if confirm.abortable_pause(pause_ms):
+        reply = f"Aborted during announce pause: {announce}"
+        overlay.show({"status": reply, "phase": "cancelled"})
+        overlay.clear("cancelled")
+        result = {
+            "announce": announce,
+            "step": step,
+            "policy": decision,
+            "outcome": "cancelled",
+            "observation": None,
+            "user_reply": reply,
+            "user_confirm": "abort",
+        }
+        print(json.dumps(result, indent=2))
+        return result
+
+    overlay.show({"status": announce, "phase": "acting"})
+    act_info = omp_tool.run_task(
+        str(step.get("prompt") or ""),
+        Path(str(step.get("workspace") or ROOT)),
+    )
+    act_err = act_info.get("error")
+    response = str(act_info.get("response") or "").strip()
+    if act_err:
+        outcome = "stop"
+        reply = f"omp failed: {act_err}"
+        summary = reply
+        phase = "failed"
+    else:
+        outcome = "ok"
+        reply = response or "omp completed the delegated task."
+        summary = (
+            f"omp completed successfully "
+            f"(format={act_info.get('format')}, events={act_info.get('event_count', 0)})"
+        )
+        phase = "done"
+
+    overlay.show({"status": "done" if outcome == "ok" else reply, "phase": phase})
+    overlay.clear(phase)
+    observation = {
+        "source": "omp",
+        "summary": summary[:500],
+        "changed": outcome == "ok",
+    }
+    state.action_log.append(
+        ActionEntry(
+            t=iso_now(),
+            announce="Ask omp: <prompt omitted from persistent log>",
+            step={
+                "type": "CodeTask",
+                "workspace": step.get("workspace"),
+                "prompt": "<omitted from persistent log>",
+                "prompt_chars": len(str(step.get("prompt") or "")),
+            },
+            policy_decision=decision,
+            outcome=outcome,
+            observation_summary=observation["summary"],
+        )
+    )
+    state.last_observation = observation
+    save_state(state)
+
+    result = {
+        "announce": announce,
+        "step": step,
+        "policy": decision,
+        "outcome": outcome,
+        "observation": observation,
+        "user_reply": reply,
+        "action_log_len": len(state.action_log),
+        "transition": False,
+        "frames_before": None,
+        "frames_after": None,
+        "opened_extra": False,
+        "method": act_info.get("method"),
+        "raise_err": None,
+        "raise_only": raise_only,
+        "user_confirm": user_confirm,
+        "act": {k: v for k, v in act_info.items() if k != "error" or act_err},
+    }
+    print(json.dumps(result, indent=2))
+    return result
+
+
 def run_turn(
     user_text: str,
     pause_ms: int = 400,
@@ -177,7 +276,7 @@ def run_turn(
     confirm_timeout_s: float = 60.0,
 ) -> dict[str, Any]:
     state = load_state()
-    step = plan.plan_gui_step(user_text)
+    step = plan.plan_step(user_text, workspace=ROOT)
     if step is None:
         return _emit(
             state,
@@ -188,7 +287,7 @@ def run_turn(
             reply=(
                 "Stub planner does not understand: "
                 f"{user_text!r}. Try: focus terminal | focus files | "
-                "type hello | type hello and enter | click New Tab | new tab"
+                "type hello | type hello and enter | click New Tab | new tab | code explain README.md"
             ),
             observation=state.last_observation,
             extra={},
@@ -256,6 +355,17 @@ def run_turn(
                 "phase": "announce",
                 "target": a11y.target_hint_for_step(step),
             }
+        )
+
+    if stype == "CodeTask":
+        return _run_code_task(
+            step=step,
+            announce=announce,
+            decision=decision,
+            state=state,
+            pause_ms=pause_ms,
+            raise_only=raise_only,
+            user_confirm=user_confirm,
         )
 
     pre = a11y.observe()

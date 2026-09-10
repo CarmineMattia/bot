@@ -4,7 +4,7 @@ Throwaway-quality driver that exercises [docs/gui-loop.md](../docs/gui-loop.md) 
 
 ## What it does
 
-1. Stub-plans `FocusWindow` / `TypeText` / `ClickA11y` / `Hotkey`
+1. Stub-plans `FocusWindow` / `TypeText` / `ClickA11y` / `Hotkey` / `CodeTask`
 2. Announce via overlay (status bar + crosshair/rect) before act; also logged on stderr
 3. Ensure FocusWindow target is in AT-SPI tree (launch/rebind only if **zero** frames)
 4. Act: Activate / Overview raise / type / a11y-click / explicit key chord
@@ -42,6 +42,8 @@ python3 -m spike --raise-only "focus the terminal"
 `--raise-only` never launches. If frames are 0 → immediate `stop`.
 
 **Pass for Silvio:** ACTIVE Files↔Terminal transitions, frame counts stay at baseline (no growth from monitor start).
+
+Files↔Terminal is the **proof pair** (need a real ACTIVE flip each turn). FocusWindow itself is app-agnostic — same step would raise Firefox or Editor once mapped in the planner.
 
 ## Type / Click (after a window is focused)
 
@@ -98,3 +100,14 @@ BOT_OVERLAY=0 python3 -m spike --raise-only "focus files"
 | Nautilus absent from AT-SPI | ensure/rebind only when zero frames |
 | ACTIVE via **new** windows | no `--new-window` on raise path; reject frame-count increase |
 | Need real raise | Overview + ydotool (frame count stable in tests) |
+
+
+## Code task via omp
+
+```bash
+# Every code task uses ask policy (confirm with --yes)
+python3 -m spike --yes "code explain README.md"
+python3 -m spike --yes "omp add parser unit tests"
+```
+
+Requires `omp` and `bwrap` on PATH. Workspace must be a git repo root. Runs one sandboxed non-interactive `omp --print` process.

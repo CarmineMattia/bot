@@ -45,6 +45,8 @@ ClickPoint    { x: number, y: number, button?: "left"|"right" }  # last resort
 
 Coordinates are in **logical screen space** shared with the overlay (same scale / monitor mapping as the adapter).
 
+**FocusWindow scope:** raise / activate an already-running app (any `app_id`: terminal, Files, Firefox, …). Same step type everywhere. Alternating Files↔Terminal in the spike is only a **test protocol** so each turn can prove an ACTIVE *transition*; it is not a product limit. Opening a browser tab or navigating a URL is a *different* step (`Hotkey` / `TypeText` / `ClickA11y`), not FocusWindow.
+
 ## Observation
 
 ```text

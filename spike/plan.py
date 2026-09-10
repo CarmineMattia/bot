@@ -1,8 +1,9 @@
-"""Stub planner: map a few phrases to GuiStep (docs/gui-loop.md)."""
+"""Stub planner: map a few phrases to one GUI or code step."""
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
 
@@ -155,8 +156,32 @@ def plan_gui_step(user_text: str) -> dict[str, Any] | None:
     return None
 
 
+
+def plan_step(user_text: str, *, workspace: Path | None = None) -> dict[str, Any] | None:
+    """Plan exactly one spike step; ``code``/``omp`` delegates to omp."""
+    match = re.match(
+        r"^(?:code|omp)\s+(.+)$",
+        user_text.strip(),
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        prompt = match.group(1).strip()
+        if prompt:
+            root = (workspace or Path.cwd()).expanduser().resolve()
+            return {
+                "type": "CodeTask",
+                "prompt": prompt,
+                "workspace": str(root),
+            }
+    return plan_gui_step(user_text)
+
+
 def announce_for(step: dict[str, Any]) -> str:
     stype = step.get("type")
+    if stype == "CodeTask":
+        prompt = str(step.get("prompt") or "")
+        shown = prompt if len(prompt) <= 100 else prompt[:97] + "…"
+        return f"Ask omp: {shown}"
     if stype == "TypeText":
         text = str(step.get("text") or "")
         shown = text if len(text) <= 40 else text[:37] + "…"

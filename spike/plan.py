@@ -66,7 +66,6 @@ def _wordish(haystack: str, needle: str) -> bool:
 
 def _parse_type(user_text: str) -> dict[str, Any] | None:
     t = user_text.strip()
-    low = t.lower()
     m = re.match(
         r"^(?:type|digita|scrivi)\s+(.+)$",
         t,
@@ -83,16 +82,15 @@ def _parse_type(user_text: str) -> dict[str, Any] | None:
         " + enter",
         " con invio",
         " e invio",
+        " and submit",
+        " then submit",
+        " + submit",
+        " submit",
     ):
         if rest.lower().endswith(cue):
             rest = rest[: -len(cue)].strip()
             submit = True
             break
-    if "submit" in low and not submit:
-        rest2 = re.sub(r"\bsubmit\b", "", rest, flags=re.IGNORECASE).strip()
-        if rest2 != rest:
-            rest = rest2
-            submit = True
     qm = re.match(r'^["\'](.+)["\']\s*$', rest, flags=re.DOTALL)
     if qm:
         rest = qm.group(1)

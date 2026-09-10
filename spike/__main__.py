@@ -35,6 +35,9 @@ from . import a11y, act, confirm, omp_tool, overlay, plan, policy, voice
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_PATH = ROOT / ".spike_state.json"
+MAX_TURN_STDERR_CHARS = 4_000
+PERSISTED_TEXT_PLACEHOLDER = "<omitted from persistent log>"
+PERSISTED_PROMPT_PLACEHOLDER = "<omitted from persistent log>"
 
 Outcome = Literal[
     "ok",
@@ -65,6 +68,34 @@ class SpikeState:
         self.action_log = self.action_log[-n:]
 
 
+def _persistent_action(
+    announce: str, step: dict[str, Any] | None
+) -> tuple[str, dict[str, Any]]:
+    """Remove user-provided task and typing content from the durable action log."""
+    stored_step = dict(step or {})
+    stype = stored_step.get("type")
+    if stype == "CodeTask":
+        prompt = str(stored_step.get("prompt") or "")
+        if prompt != PERSISTED_PROMPT_PLACEHOLDER:
+            stored_step["prompt_chars"] = len(prompt)
+        stored_step["prompt"] = PERSISTED_PROMPT_PLACEHOLDER
+        announce = "Ask omp: <prompt omitted from persistent log>"
+    elif stype == "TypeText":
+        text = str(stored_step.get("text") or "")
+        if text != PERSISTED_TEXT_PLACEHOLDER:
+            stored_step["text_chars"] = len(text)
+        stored_step["text"] = PERSISTED_TEXT_PLACEHOLDER
+        suffix = " + Enter" if stored_step.get("submit") else ""
+        announce = f"Type <text omitted from persistent log>{suffix}"
+    return announce, stored_step
+
+
+def _persistent_entry(entry: ActionEntry) -> dict[str, Any]:
+    stored = asdict(entry)
+    stored["announce"], stored["step"] = _persistent_action(entry.announce, entry.step)
+    return stored
+
+
 def load_state() -> SpikeState:
     if not STATE_PATH.exists():
         return SpikeState()
@@ -78,7 +109,7 @@ def save_state(state: SpikeState) -> None:
     STATE_PATH.write_text(
         json.dumps(
             {
-                "action_log": [asdict(e) for e in state.action_log],
+                "action_log": [_persistent_entry(e) for e in state.action_log],
                 "last_observation": state.last_observation,
             },
             indent=2,
@@ -99,6 +130,19 @@ def _with_changed(obs: dict[str, Any] | None, changed: bool) -> dict[str, Any] |
     return out
 
 
+def _turn_act_info(act_info: dict[str, Any], act_err: Any) -> dict[str, Any]:
+    """Keep turn diagnostics useful without echoing omp's raw event stream."""
+    public = {
+        key: value
+        for key, value in act_info.items()
+        if key not in {"events", "stdout"} and (key != "error" or act_err)
+    }
+    stderr = public.get("stderr")
+    if isinstance(stderr, str) and len(stderr) > MAX_TURN_STDERR_CHARS:
+        public["stderr"] = stderr[: MAX_TURN_STDERR_CHARS - 1] + "…"
+    return public
+
+
 def _emit(
     state: SpikeState,
     *,
@@ -113,10 +157,11 @@ def _emit(
 ) -> dict[str, Any]:
     """Append action log (every exit), persist, print JSON result."""
     obs = _with_changed(observation, changed)
+    stored_announce, stored_step = _persistent_action(announce, step)
     entry = ActionEntry(
         t=iso_now(),
-        announce=announce,
-        step=step or {},
+        announce=stored_announce,
+        step=stored_step,
         policy_decision=decision,
         outcome=outcome,
         observation_summary=str((obs or {}).get("summary") or ""),
@@ -189,17 +234,16 @@ def _run_code_task(
         reply = f"Aborted during announce pause: {announce}"
         overlay.show({"status": reply, "phase": "cancelled"})
         overlay.clear("cancelled")
-        result = {
-            "announce": announce,
-            "step": step,
-            "policy": decision,
-            "outcome": "cancelled",
-            "observation": None,
-            "user_reply": reply,
-            "user_confirm": "abort",
-        }
-        print(json.dumps(result, indent=2))
-        return result
+        return _emit(
+            state,
+            announce=announce,
+            step=step,
+            decision=decision,
+            outcome="cancelled",
+            reply=reply,
+            observation=None,
+            extra={"user_confirm": "abort"},
+        )
 
     overlay.show({"status": announce, "phase": "acting"})
     act_info = omp_tool.run_task(
@@ -229,44 +273,27 @@ def _run_code_task(
         "summary": summary[:500],
         "changed": outcome == "ok",
     }
-    state.action_log.append(
-        ActionEntry(
-            t=iso_now(),
-            announce="Ask omp: <prompt omitted from persistent log>",
-            step={
-                "type": "CodeTask",
-                "workspace": step.get("workspace"),
-                "prompt": "<omitted from persistent log>",
-                "prompt_chars": len(str(step.get("prompt") or "")),
-            },
-            policy_decision=decision,
-            outcome=outcome,
-            observation_summary=observation["summary"],
-        )
+    return _emit(
+        state,
+        announce=announce,
+        step=step,
+        decision=decision,
+        outcome=outcome,
+        reply=reply,
+        observation=observation,
+        changed=outcome == "ok",
+        extra={
+            "transition": False,
+            "frames_before": None,
+            "frames_after": None,
+            "opened_extra": False,
+            "method": act_info.get("method"),
+            "raise_err": None,
+            "raise_only": raise_only,
+            "user_confirm": user_confirm,
+            "act": _turn_act_info(act_info, act_err),
+        },
     )
-    state.last_observation = observation
-    save_state(state)
-
-    result = {
-        "announce": announce,
-        "step": step,
-        "policy": decision,
-        "outcome": outcome,
-        "observation": observation,
-        "user_reply": reply,
-        "action_log_len": len(state.action_log),
-        "transition": False,
-        "frames_before": None,
-        "frames_after": None,
-        "opened_extra": False,
-        "method": act_info.get("method"),
-        "raise_err": None,
-        "raise_only": raise_only,
-        "user_confirm": user_confirm,
-        "act": {k: v for k, v in act_info.items() if k != "error" or act_err},
-    }
-    print(json.dumps(result, indent=2))
-    return result
 
 
 def run_turn(
@@ -536,13 +563,9 @@ def run_turn(
 
     elif stype == "TypeText":
         # Ptyxis rarely exposes typed text in AT-SPI; trust type_target + ydotool.
-        # Still soft-retry once on actuation error.
-        if act_err:
-            retried = True
-            act_info, post = _retry_same(
-                step, announce=announce, pause_ms=pause_ms, raise_only=raise_only, pre=pre
-            )
-            act_err = act_info.get("error")
+        # Never repeat uncertain text actuation. In particular, _perform_type
+        # reports typed=True when only Enter failed, so replaying the full step
+        # would duplicate the user's text.
         if act_err:
             outcome = "stop"
             reply = f"TypeText failed: {act_err}"
@@ -566,41 +589,24 @@ def run_turn(
             reply = f"ClickA11y failed: {act_err}"
             overlay.show({"status": reply, "phase": "failed"})
         else:
+            # Error-free delivery is the actuation proof. A click often does
+            # not alter the AT-SPI fingerprint; retrying would double-click.
             transition = a11y.fingerprint_delta(pre, post)
-            if not transition:
-                retried = True
-                act_info, post = _retry_same(
-                    step,
-                    announce=announce,
-                    pause_ms=pause_ms,
-                    raise_only=raise_only,
-                    pre=pre,
-                )
-                act_err = act_info.get("error")
-                transition = (not act_err) and a11y.fingerprint_delta(pre, post)
-            if act_err:
-                outcome = "stop"
-                reply = f"ClickA11y failed: {act_err}"
-                overlay.show({"status": reply, "phase": "failed"})
-            elif transition:
-                outcome = "ok"
-                tgt = act_info.get("target") or {}
+            outcome = "ok"
+            tgt = act_info.get("target") or {}
+            if transition:
                 reply = (
                     f"Clicked {tgt.get('role')} {tgt.get('name')!r} "
-                    f"via {act_info.get('method')}"
-                    f"{' after retry' if retried else ''} "
+                    f"via {act_info.get('method')} "
                     f"(a11y_delta=True; focus={post.get('summary')})."
                 )
-                overlay.show({"status": "done", "phase": "done"})
             else:
-                outcome = "stop"
-                tgt = act_info.get("target") or {}
                 reply = (
-                    f"ClickA11y soft-fail: no a11y delta after act/retry "
-                    f"on {tgt.get('role')} {tgt.get('name')!r} "
-                    f"(method={act_info.get('method')}; focus={post.get('summary')})."
+                    f"Clicked {tgt.get('role')} {tgt.get('name')!r} "
+                    f"via {act_info.get('method')} "
+                    f"(a11y_delta=False; click trusted; focus={post.get('summary')})."
                 )
-                overlay.show({"status": "failed", "phase": "failed"})
+            overlay.show({"status": "done", "phase": "done"})
 
     elif stype == "Hotkey":
         if act_err:
@@ -656,7 +662,7 @@ def run_turn(
             "raise_err": act_info.get("raise_err"),
             "raise_only": raise_only,
             "user_confirm": user_confirm,
-            "act": {k: v for k, v in act_info.items() if k != "error" or act_err},
+            "act": _turn_act_info(act_info, act_err),
         },
     )
 

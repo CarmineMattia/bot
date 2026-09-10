@@ -6,6 +6,7 @@ new Home/Ptyxis frames. FocusWindow must not do that when frames already exist.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import time
@@ -121,12 +122,28 @@ def _rebind_a11y(app_id: str) -> str | None:
     return f"no a11y-rebind recipe for {app_id}"
 
 
-def ensure_in_tree(app_id: str, timeout_s: float = 8.0, *, allow_launch: bool = True) -> str | None:
+def ensure_in_tree(
+    app_id: str,
+    timeout_s: float = 8.0,
+    *,
+    allow_launch: bool = True,
+    allow_rebind: bool | None = None,
+) -> str | None:
     """Ensure at least one frame exists. Does nothing if already in tree.
 
     If allow_launch is False (raise-only mode), missing frames are an error —
     never gtk-launch / --new-window / rebind.
+
+    killall-based a11y rebind is off by default (destructive on auto policy).
+    Opt in with allow_rebind=True or BOT_ALLOW_REBIND=1.
     """
+    if allow_rebind is None:
+        allow_rebind = os.environ.get("BOT_ALLOW_REBIND", "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+
     obs = a11y.observe()
     if target_frame_count(obs, app_id) > 0:
         return None
@@ -140,6 +157,14 @@ def ensure_in_tree(app_id: str, timeout_s: float = 8.0, *, allow_launch: bool = 
     obs = a11y.wait_until_in_tree(app_id, timeout_s=timeout_s)
     if target_frame_count(obs, app_id) > 0:
         return None
+
+    if not allow_rebind:
+        return (
+            f"{app_id} not in AT-SPI tree after launch "
+            f"(launch={launch_err}; in_tree={obs.get('in_tree')}). "
+            "Refusing killall rebind on auto path. "
+            "Restart the app with toolkit-accessibility on, or set BOT_ALLOW_REBIND=1."
+        )
 
     rebind_err = _rebind_a11y(app_id)
     obs = a11y.wait_until_in_tree(app_id, timeout_s=timeout_s)
@@ -259,19 +284,48 @@ def _perform_hotkey(step: dict[str, Any]) -> dict[str, Any]:
     keys = step.get("keys")
     if not isinstance(keys, list):
         return {"error": "Hotkey keys must be a list", "method": "hotkey"}
-    focused = a11y.observe().get("focused")
-    if not focused:
+
+    obs = a11y.observe()
+    require_app = step.get("app_id") or step.get("require_app")
+    # Prefer ACTIVE client frame (gnome-shell often steals FOCUSED in observe()).
+    active = None
+    for fr in obs.get("frames") or []:
+        flags = fr.get("flags") or []
+        app = str(fr.get("app_id") or "")
+        if "ACTIVE" not in flags:
+            continue
+        if app.lower() == "gnome-shell":
+            continue
+        active = fr
+        break
+
+    if require_app:
+        if not active or not a11y.app_match(str(active.get("app_id") or ""), str(require_app)):
+            got = (active or {}).get("app_id") or (obs.get("focused") or {}).get("app_id")
+            return {
+                "error": (
+                    f"Hotkey requires ACTIVE {require_app}; "
+                    f"got {got!r}. Focus the target app first."
+                ),
+                "method": "hotkey",
+                "keys": keys,
+                "focused_before": active or obs.get("focused"),
+            }
+    elif not active:
         return {
-            "error": "no focused application for Hotkey",
+            "error": "no ACTIVE client application for Hotkey",
             "method": "hotkey",
             "keys": keys,
+            "focused_before": obs.get("focused"),
         }
+
     err = ydo.hotkey(keys)
     return {
         "error": err,
         "method": "ydotool_key",
         "keys": keys,
-        "focused_before": focused,
+        "focused_before": active or obs.get("focused"),
+        "require_app": require_app,
     }
 
 

@@ -19,7 +19,7 @@ KNOWN_FOCUS: list[tuple[tuple[str, ...], dict[str, Any], str]] = [
         "Focus Files (Nautilus)",
     ),
     (
-        ("editor", "text editor", "gedit", "write"),
+        ("text editor", "gnome text editor", "gedit", "editor"),
         {"type": "FocusWindow", "app_id": "org.gnome.TextEditor", "title_match": None},
         "Focus Text Editor",
     ),
@@ -42,11 +42,25 @@ KNOWN_CLICK: list[tuple[tuple[str, ...], dict[str, Any], str]] = [
 KNOWN_HOTKEY: list[tuple[tuple[str, ...], dict[str, Any], str]] = [
     (
         ("new tab", "open a new tab", "nuova scheda", "apri una nuova scheda"),
-        {"type": "Hotkey", "keys": ["ctrl", "shift", "t"]},
+        {
+            "type": "Hotkey",
+            "keys": ["ctrl", "shift", "t"],
+            "app_id": "org.gnome.Ptyxis",
+        },
         "Open a new Ptyxis tab (Ctrl+Shift+T)",
     ),
 ]
 
+
+def _wordish(haystack: str, needle: str) -> bool:
+    """Match needle as whole words / phrase, not bare substring inside another word."""
+    h = haystack.lower().strip()
+    n = needle.lower().strip()
+    if not n:
+        return False
+    if " " in n or "-" in n:
+        return n in h
+    return re.search(rf"(?<![a-z0-9]){re.escape(n)}(?![a-z0-9])", h) is not None
 
 
 def _parse_type(user_text: str) -> dict[str, Any] | None:
@@ -61,7 +75,6 @@ def _parse_type(user_text: str) -> dict[str, Any] | None:
         return None
     rest = m.group(1).strip()
     submit = False
-    # strip trailing submit cues
     for cue in (
         " and press enter",
         " then enter",
@@ -75,12 +88,10 @@ def _parse_type(user_text: str) -> dict[str, Any] | None:
             submit = True
             break
     if "submit" in low and not submit:
-        # "type foo submit" / "type submit foo"
         rest2 = re.sub(r"\bsubmit\b", "", rest, flags=re.IGNORECASE).strip()
         if rest2 != rest:
             rest = rest2
             submit = True
-    # quoted string
     qm = re.match(r'^["\'](.+)["\']\s*$', rest, flags=re.DOTALL)
     if qm:
         rest = qm.group(1)
@@ -101,10 +112,8 @@ def _parse_click(user_text: str) -> dict[str, Any] | None:
     rest = m.group(1).strip()
     low = rest.lower()
     for keys, step, _ann in KNOWN_CLICK:
-        if any(k in low for k in keys):
+        if any(_wordish(low, k) for k in keys):
             return dict(step)
-    # generic: click <name>  (role = push button)
-    # optional "button/menu ..."
     role = "push button"
     name = rest
     rm = re.match(
@@ -135,11 +144,13 @@ def plan_gui_step(user_text: str) -> dict[str, Any] | None:
     if clicked:
         return clicked
     t = user_text.strip().lower()
+    # Hotkey before Focus: "new tab" must not fall through to nothing / wrong hand.
     for keys, step, _announce in KNOWN_HOTKEY:
-        if any(t == key for key in keys):
+        if any(t == key or _wordish(t, key) for key in keys):
             return dict(step)
+    # Prefer "focus …" cues; still allow bare app names.
     for keys, step, _announce in KNOWN_FOCUS:
-        if any(k in t for k in keys):
+        if any(_wordish(t, k) for k in keys):
             return dict(step)
     return None
 

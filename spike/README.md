@@ -18,7 +18,7 @@ Throwaway-quality driver that exercises [docs/gui-loop.md](../docs/gui-loop.md) 
 gsettings set org.gnome.desktop.interface toolkit-accessibility true
 
 # input daemon (needs /dev/uinput ACL — already OK for cr1m3 on this machine)
-ydotoold -p "$XDG_RUNTIME_DIR/.ydotool_socket" -P 0666 &
+ydotoold -p "$XDG_RUNTIME_DIR/.ydotool_socket" -P 0600 &
 export YDOTOOL_SOCKET="$XDG_RUNTIME_DIR/.ydotool_socket"
 ```
 
@@ -56,16 +56,16 @@ python3 -m spike "click New Tab"
 
 ### Ptyxis New Tab via Hotkey
 
-Focus Ptyxis first, then run:
+Requires **Ptyxis ACTIVE** first (won’t send Ctrl+Shift+T to gnome-shell/Firefox).
 
 ```bash
+python3 -m spike --raise-only "focus the terminal"
 python3 -m spike "new tab"
+# also: "open a new tab" / "please open a new tab"
 ```
 
-The planner emits the explicit step
-`{"type":"Hotkey","keys":["ctrl","shift","t"]}` and sends that chord through
-ydotool. It does **not** retry as `ClickA11y` or invent a silent fallback.
-`click New Tab` remains the a11y-click path (and will still fail if AT-SPI has no button).
+Emits `{"type":"Hotkey","keys":["ctrl","shift","t"],"app_id":"org.gnome.Ptyxis"}`.
+Does **not** fall back to `ClickA11y`. `click New Tab` remains the a11y path (fails if no button in tree).
 
 Policy: destructive click names (`Delete`, `Send`, …) → **ask** (overlay `CONFIRM?` + wait).
 
@@ -78,6 +78,8 @@ python3 -m spike "click Delete"
 ```
 
 During auto announce pause, typing `q` / `n` on a TTY aborts before act.
+
+`killall` a11y rebind is **off** by default (`BOT_ALLOW_REBIND=1` to opt in).
 
 ## Overlay UI
 

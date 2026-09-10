@@ -46,7 +46,7 @@ def ensure_ydotoold() -> str | None:
         return None
     try:
         subprocess.Popen(
-            ["ydotoold", "-p", sock, "-P", "0666"],
+            ["ydotoold", "-p", sock, "-P", "0600"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
@@ -110,6 +110,9 @@ def click_abs(x: int, y: int) -> str | None:
 
 def hotkey(keys: list[str]) -> str | None:
     """Press a key chord using Linux input-event key codes."""
+    err = ensure_ydotoold()
+    if err:
+        return err
     normalized = [str(key).strip().lower() for key in keys]
     if len(normalized) < 2:
         return "Hotkey requires at least two keys"

@@ -7,6 +7,7 @@ Implements docs/gui-loop.md success criteria with:
 - TypeText / ClickA11y: ydotool (+ AT-SPI action when possible)
 - Hotkey: explicit ydotool key chord (no ClickA11y fallback)
 - FocusWindow observe requires an ACTIVE *transition* (Silvio: already-focused ≠ proof)
+- Soft-fail: retry same step once when observe shows no meaningful delta
 
 Run from a normal user session (Ptyxis):
 
@@ -30,6 +31,15 @@ from . import a11y, act, confirm, overlay, plan, policy
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_PATH = ROOT / ".spike_state.json"
+
+Outcome = Literal[
+    "ok",
+    "retry",
+    "stop",
+    "already_focused",
+    "need_confirm",
+    "cancelled",
+]
 
 
 @dataclass
@@ -77,6 +87,87 @@ def iso_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
+def _with_changed(obs: dict[str, Any] | None, changed: bool) -> dict[str, Any] | None:
+    if obs is None:
+        return None
+    out = dict(obs)
+    out["changed"] = bool(changed)
+    return out
+
+
+def _emit(
+    state: SpikeState,
+    *,
+    announce: str,
+    step: dict[str, Any] | None,
+    decision: str,
+    outcome: str,
+    reply: str,
+    observation: dict[str, Any] | None,
+    changed: bool = False,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Append action log (every exit), persist, print JSON result."""
+    obs = _with_changed(observation, changed)
+    entry = ActionEntry(
+        t=iso_now(),
+        announce=announce,
+        step=step or {},
+        policy_decision=decision,
+        outcome=outcome,
+        observation_summary=str((obs or {}).get("summary") or ""),
+    )
+    state.action_log.append(entry)
+    if obs is not None:
+        state.last_observation = obs
+    save_state(state)
+    result: dict[str, Any] = {
+        "announce": announce,
+        "step": step,
+        "policy": decision,
+        "outcome": outcome,
+        "observation": obs,
+        "user_reply": reply,
+        "action_log_len": len(state.action_log),
+    }
+    if extra:
+        result.update(extra)
+    print(json.dumps(result, indent=2))
+    return result
+
+
+def _retry_same(
+    step: dict[str, Any],
+    *,
+    announce: str,
+    pause_ms: int,
+    raise_only: bool,
+    pre: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """One soft-fail retry of the same GuiStep. Returns (act_info, post)."""
+    overlay.show(
+        {
+            "status": f"retry: {announce}",
+            "phase": "announce",
+            "target": a11y.target_hint_for_step(step),
+        }
+    )
+    time.sleep(pause_ms / 1000.0)
+    overlay.show(
+        {
+            "status": f"retry: {announce}",
+            "phase": "acting",
+            "target": a11y.target_hint_for_step(step),
+        }
+    )
+    act_info = act.perform(step, raise_only=raise_only)
+    time.sleep(0.45)
+    post = a11y.observe()
+    # keep pre for delta vs original pre-act snapshot (gui-loop: same step)
+    _ = pre
+    return act_info, post
+
+
 def run_turn(
     user_text: str,
     pause_ms: int = 400,
@@ -88,20 +179,20 @@ def run_turn(
     state = load_state()
     step = plan.plan_gui_step(user_text)
     if step is None:
-        result = {
-            "announce": "",
-            "step": None,
-            "policy": "deny",
-            "outcome": "stop",
-            "observation": state.last_observation,
-            "user_reply": (
+        return _emit(
+            state,
+            announce="",
+            step=None,
+            decision="deny",
+            outcome="stop",
+            reply=(
                 "Stub planner does not understand: "
                 f"{user_text!r}. Try: focus terminal | focus files | "
                 "type hello | type hello and enter | click New Tab | new tab"
             ),
-        }
-        print(json.dumps(result, indent=2))
-        return result
+            observation=state.last_observation,
+            extra={},
+        )
 
     decision = policy.decide(step)
     announce = plan.announce_for(step)
@@ -109,17 +200,16 @@ def run_turn(
     user_confirm: str | None = None
 
     if decision == "deny":
-        result = {
-            "announce": announce,
-            "step": step,
-            "policy": decision,
-            "outcome": "stop",
-            "observation": None,
-            "user_reply": f"Denied by policy: {announce}",
-            "user_confirm": None,
-        }
-        print(json.dumps(result, indent=2))
-        return result
+        return _emit(
+            state,
+            announce=announce,
+            step=step,
+            decision=decision,
+            outcome="stop",
+            reply=f"Denied by policy: {announce}",
+            observation=None,
+            extra={"user_confirm": None},
+        )
 
     if decision == "ask":
         overlay.show(
@@ -135,90 +225,87 @@ def run_turn(
             timeout_s=confirm_timeout_s,
         )
         user_confirm = verdict
-        if verdict == "confirm":
-            overlay.show(
-                {
-                    "status": announce,
-                    "phase": "announce",
-                    "target": a11y.target_hint_for_step(step),
-                }
-            )
-            # fall through into act path
-        else:
+        if verdict != "confirm":
             if verdict == "need_tty":
-                outcome = "need_confirm"
+                outcome: Outcome = "need_confirm"
                 reply = (
                     f"Confirm required before: {announce}. "
                     "Re-run with --yes / --no, or set BOT_CONFIRM=yes|no, or use a TTY."
                 )
-                phase = "cancelled"
             elif verdict == "timeout":
                 outcome = "cancelled"
                 reply = f"Confirm timed out — aborted: {announce}"
-                phase = "cancelled"
             else:
                 outcome = "cancelled"
                 reply = f"Aborted by user before act: {announce}"
-                phase = "cancelled"
-            overlay.show({"status": reply, "phase": phase})
-            overlay.clear(phase if phase != "cancelled" else "cancelled")
-            result = {
-                "announce": announce,
-                "step": step,
-                "policy": decision,
-                "outcome": outcome,
-                "observation": None,
-                "user_reply": reply,
-                "user_confirm": user_confirm,
+            overlay.show({"status": reply, "phase": "cancelled"})
+            overlay.clear("cancelled")
+            return _emit(
+                state,
+                announce=announce,
+                step=step,
+                decision=decision,
+                outcome=outcome,
+                reply=reply,
+                observation=None,
+                extra={"user_confirm": user_confirm},
+            )
+        overlay.show(
+            {
+                "status": announce,
+                "phase": "announce",
+                "target": a11y.target_hint_for_step(step),
             }
-            print(json.dumps(result, indent=2))
-            return result
+        )
 
     pre = a11y.observe()
 
     if stype == "FocusWindow":
-        # Silvio: if already ACTIVE, do not call that a successful focus change.
         if a11y.already_focused(pre, step):
-            result = {
-                "announce": announce,
-                "step": step,
-                "policy": decision,
-                "outcome": "already_focused",
-                "observation": pre,
-                "user_reply": (
-                    f"Inconclusive: target already ACTIVE before act "
-                    f"({pre.get('summary')}). Switch to another window first, then retry."
-                ),
-                "action_log_len": len(state.action_log),
-                "raise_only": raise_only,
-                "user_confirm": user_confirm,
-            }
-            overlay.show({"status": result["user_reply"], "phase": "cancelled"})
+            reply = (
+                f"Inconclusive: target already ACTIVE before act "
+                f"({pre.get('summary')}). Switch to another window first, then retry."
+            )
+            overlay.show({"status": reply, "phase": "cancelled"})
             overlay.clear("cancelled")
-            print(json.dumps(result, indent=2))
-            return result
+            return _emit(
+                state,
+                announce=announce,
+                step=step,
+                decision=decision,
+                outcome="already_focused",
+                reply=reply,
+                observation=pre,
+                changed=False,
+                extra={
+                    "raise_only": raise_only,
+                    "user_confirm": user_confirm,
+                },
+            )
 
         if raise_only and not a11y.target_in_tree(pre, step.get("app_id") or ""):
-            result = {
-                "announce": announce,
-                "step": step,
-                "policy": decision,
-                "outcome": "stop",
-                "observation": pre,
-                "user_reply": (
-                    f"raise-only: {step.get('app_id')} not in AT-SPI tree. "
-                    "Open exactly one window manually before the monitor starts."
-                ),
-                "frames_before": 0,
-                "frames_after": 0,
-                "opened_extra": False,
-                "raise_only": True,
-                "user_confirm": user_confirm,
-            }
-            overlay.show({"status": result["user_reply"], "phase": "failed"})
+            reply = (
+                f"raise-only: {step.get('app_id')} not in AT-SPI tree. "
+                "Open exactly one window manually before the monitor starts."
+            )
+            overlay.show({"status": reply, "phase": "failed"})
             overlay.clear("failed")
-            print(json.dumps(result, indent=2))
-            return result
+            return _emit(
+                state,
+                announce=announce,
+                step=step,
+                decision=decision,
+                outcome="stop",
+                reply=reply,
+                observation=pre,
+                extra={
+                    "frames_before": 0,
+                    "frames_after": 0,
+                    "opened_extra": False,
+                    "raise_only": True,
+                    "user_confirm": user_confirm,
+                },
+            )
 
     overlay.show(
         {
@@ -232,17 +319,16 @@ def run_turn(
         reply = f"Aborted during announce pause: {announce}"
         overlay.show({"status": reply, "phase": "cancelled"})
         overlay.clear("cancelled")
-        result = {
-            "announce": announce,
-            "step": step,
-            "policy": decision,
-            "outcome": "cancelled",
-            "observation": pre,
-            "user_reply": reply,
-            "user_confirm": "abort",
-        }
-        print(json.dumps(result, indent=2))
-        return result
+        return _emit(
+            state,
+            announce=announce,
+            step=step,
+            decision=decision,
+            outcome="cancelled",
+            reply=reply,
+            observation=pre,
+            extra={"user_confirm": "abort"},
+        )
 
     overlay.show(
         {
@@ -256,10 +342,11 @@ def run_turn(
     time.sleep(0.45)
     post = a11y.observe()
 
-    outcome: Literal["ok", "retry", "stop", "already_focused"]
     transition = False
     opened_extra = bool(act_info.get("opened_extra"))
+    retried = False
     reply = ""
+    outcome: Outcome = "stop"
 
     if stype == "FocusWindow":
         transition = a11y.changed(pre, post, step) and not opened_extra
@@ -283,12 +370,11 @@ def run_turn(
             )
             overlay.show({"status": "done", "phase": "done"})
         else:
-            overlay.show({"status": f"retry: {announce}", "phase": "announce"})
-            time.sleep(pause_ms / 1000.0)
-            act_info = act.perform(step, raise_only=raise_only)
+            retried = True
+            act_info, post = _retry_same(
+                step, announce=announce, pause_ms=pause_ms, raise_only=raise_only, pre=pre
+            )
             act_err = act_info.get("error")
-            time.sleep(0.45)
-            post = a11y.observe()
             opened_extra = bool(act_info.get("opened_extra"))
             transition = a11y.changed(pre, post, step) and not opened_extra
             if transition and not opened_extra:
@@ -309,19 +395,28 @@ def run_turn(
                 overlay.show({"status": "failed", "phase": "failed"})
 
     elif stype == "TypeText":
+        # Ptyxis rarely exposes typed text in AT-SPI; trust type_target + ydotool.
+        # Still soft-retry once on actuation error.
+        if act_err:
+            retried = True
+            act_info, post = _retry_same(
+                step, announce=announce, pause_ms=pause_ms, raise_only=raise_only, pre=pre
+            )
+            act_err = act_info.get("error")
         if act_err:
             outcome = "stop"
             reply = f"TypeText failed: {act_err}"
             overlay.show({"status": reply, "phase": "failed"})
         else:
-            # Typing into a live field rarely flips frame flags; trust actuation + editable focus.
+            transition = a11y.fingerprint_delta(pre, post)
             outcome = "ok"
             foc = act_info.get("focused") or {}
             reply = (
                 f"Typed {act_info.get('text_len', 0)} chars"
                 f"{' + Enter' if step.get('submit') else ''} "
                 f"into {foc.get('app_id')}:{foc.get('role')} "
-                f"(method={act_info.get('method')})."
+                f"(method={act_info.get('method')}"
+                f"{'; retried' if retried else ''})."
             )
             overlay.show({"status": "done", "phase": "done"})
 
@@ -331,16 +426,41 @@ def run_turn(
             reply = f"ClickA11y failed: {act_err}"
             overlay.show({"status": reply, "phase": "failed"})
         else:
-            delta = a11y.fingerprint_delta(pre, post)
-            transition = delta
-            outcome = "ok"
-            tgt = act_info.get("target") or {}
-            reply = (
-                f"Clicked {tgt.get('role')} {tgt.get('name')!r} "
-                f"via {act_info.get('method')} "
-                f"(a11y_delta={delta}; focus={post.get('summary')})."
-            )
-            overlay.show({"status": "done", "phase": "done"})
+            transition = a11y.fingerprint_delta(pre, post)
+            if not transition:
+                retried = True
+                act_info, post = _retry_same(
+                    step,
+                    announce=announce,
+                    pause_ms=pause_ms,
+                    raise_only=raise_only,
+                    pre=pre,
+                )
+                act_err = act_info.get("error")
+                transition = (not act_err) and a11y.fingerprint_delta(pre, post)
+            if act_err:
+                outcome = "stop"
+                reply = f"ClickA11y failed: {act_err}"
+                overlay.show({"status": reply, "phase": "failed"})
+            elif transition:
+                outcome = "ok"
+                tgt = act_info.get("target") or {}
+                reply = (
+                    f"Clicked {tgt.get('role')} {tgt.get('name')!r} "
+                    f"via {act_info.get('method')}"
+                    f"{' after retry' if retried else ''} "
+                    f"(a11y_delta=True; focus={post.get('summary')})."
+                )
+                overlay.show({"status": "done", "phase": "done"})
+            else:
+                outcome = "stop"
+                tgt = act_info.get("target") or {}
+                reply = (
+                    f"ClickA11y soft-fail: no a11y delta after act/retry "
+                    f"on {tgt.get('role')} {tgt.get('name')!r} "
+                    f"(method={act_info.get('method')}; focus={post.get('summary')})."
+                )
+                overlay.show({"status": "failed", "phase": "failed"})
 
     elif stype == "Hotkey":
         if act_err:
@@ -348,15 +468,45 @@ def run_turn(
             reply = f"Hotkey failed: {act_err}"
             overlay.show({"status": reply, "phase": "failed"})
         else:
-            # Chord actuation is trusted; optional a11y delta is informational only.
-            outcome = "ok"
+            transition = a11y.fingerprint_delta(pre, post)
+            if not transition:
+                retried = True
+                act_info, post = _retry_same(
+                    step,
+                    announce=announce,
+                    pause_ms=pause_ms,
+                    raise_only=raise_only,
+                    pre=pre,
+                )
+                act_err = act_info.get("error")
+                transition = (not act_err) and a11y.fingerprint_delta(pre, post)
             keys = "+".join(str(k) for k in (step.get("keys") or []))
             foc = act_info.get("focused_before") or {}
-            reply = (
-                f"Hotkey {keys} via {act_info.get('method')} "
-                f"on {foc.get('app_id')}:{foc.get('title') or foc.get('name')}."
-            )
-            overlay.show({"status": "done", "phase": "done"})
+            if act_err:
+                outcome = "stop"
+                reply = f"Hotkey failed: {act_err}"
+                overlay.show({"status": reply, "phase": "failed"})
+            elif transition:
+                outcome = "ok"
+                reply = (
+                    f"Hotkey {keys} via {act_info.get('method')}"
+                    f"{' after retry' if retried else ''} "
+                    f"on {foc.get('app_id')}:{foc.get('title') or foc.get('name')} "
+                    f"(a11y_delta=True)."
+                )
+                overlay.show({"status": "done", "phase": "done"})
+            else:
+                # Ptyxis/etc often hide tab chrome from AT-SPI — chord delivered,
+                # one soft retry done, accept as trusted with changed=false.
+                outcome = "ok"
+                transition = False
+                reply = (
+                    f"Hotkey {keys} via {act_info.get('method')}"
+                    f"{' after retry' if retried else ''} "
+                    f"on {foc.get('app_id')}:{foc.get('title') or foc.get('name')} "
+                    f"(a11y_delta=False; chord trusted)."
+                )
+                overlay.show({"status": "done", "phase": "done"})
 
     else:
         outcome = "stop"
@@ -365,38 +515,28 @@ def run_turn(
 
     overlay.clear("done" if outcome == "ok" else "failed" if outcome == "stop" else "cancelled")
 
-    entry = ActionEntry(
-        t=iso_now(),
+    return _emit(
+        state,
         announce=announce,
         step=step,
-        policy_decision=decision,
+        decision=decision,
         outcome=outcome,
-        observation_summary=str(post.get("summary")),
+        reply=reply,
+        observation=post,
+        changed=bool(transition) if outcome == "ok" else bool(transition),
+        extra={
+            "transition": transition,
+            "retried": retried,
+            "frames_before": act_info.get("frames_before"),
+            "frames_after": act_info.get("frames_after"),
+            "opened_extra": opened_extra,
+            "method": act_info.get("method"),
+            "raise_err": act_info.get("raise_err"),
+            "raise_only": raise_only,
+            "user_confirm": user_confirm,
+            "act": {k: v for k, v in act_info.items() if k != "error" or act_err},
+        },
     )
-    state.action_log.append(entry)
-    state.last_observation = post
-    save_state(state)
-
-    result = {
-        "announce": announce,
-        "step": step,
-        "policy": decision,
-        "outcome": outcome,
-        "observation": post,
-        "user_reply": reply,
-        "action_log_len": len(state.action_log),
-        "transition": transition if stype == "FocusWindow" else transition,
-        "frames_before": act_info.get("frames_before"),
-        "frames_after": act_info.get("frames_after"),
-        "opened_extra": opened_extra,
-        "method": act_info.get("method"),
-        "raise_err": act_info.get("raise_err"),
-        "raise_only": raise_only,
-        "user_confirm": user_confirm,
-        "act": {k: v for k, v in act_info.items() if k != "error" or act_err},
-    }
-    print(json.dumps(result, indent=2))
-    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -412,6 +552,7 @@ def main(argv: list[str] | None = None) -> int:
             "\nEnv:\n"
             "  BOT_CONFIRM=yes|no    same as --yes / --no\n"
             "  BOT_OVERLAY=0         disable GTK overlay UI\n"
+            "  BOT_ALLOW_REBIND=1    allow killall a11y rebind (off by default)\n"
         )
         return 0
     if argv[0] == "--state":

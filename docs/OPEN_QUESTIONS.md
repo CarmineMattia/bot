@@ -15,6 +15,7 @@
 - Whisper + Kokoro nominati accanto a un esecutore ≠ loop vocale finché non sono sul bordo dello stesso turn.
 - **GNOME Wayland focus-steal:** raise existing windows via Overview + `ydotool` (Super → query → Enter). Do not use `--new-window` for FocusWindow. Requires `ydotoold`.
 - **Ptyxis a11y:** often exposes only frame→panel; TypeText uses ACTIVE typeable-app fallback when no FOCUSED editable node exists.
+- **killall rebind:** off by default; `BOT_ALLOW_REBIND=1` required (was too destructive on auto FocusWindow).
 
 ## Closed (non riaprire senza motivo)
 

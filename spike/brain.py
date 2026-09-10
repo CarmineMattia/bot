@@ -24,6 +24,21 @@ ALLOWED_HOTKEYS = {
     ("ctrl", "shift", "t"),
 }
 
+DANGEROUS_TYPE_TEXT_RE = re.compile(
+    r"(?<![\w-])(?:sudo|rm|passwd|curl|wget|ssh|scp|chmod|chown|dd|"
+    r"mkfs(?:\.[a-z0-9]+)?|shutdown|reboot)(?![\w-])",
+    flags=re.IGNORECASE,
+)
+
+CONFIRM_CLICK_NAMES = (
+    "ok",
+    "yes",
+    "accept",
+    "continue",
+    "sign in",
+    "cancel",
+)
+
 SYSTEM_PROMPT = """You are the planning brain for a local desktop conductor (bot).
 Return ONLY one JSON object (no markdown fences, no commentary).
 
@@ -47,6 +62,8 @@ Rules:
 - Prefer FocusWindow over guessing clicks. Prefer Hotkey new tab over ClickA11y New Tab.
 - If ambiguous between code and gui, prefer the clearer one; if still unclear, talk and ask.
 - Do not include secrets, sudo, or destructive shell in TypeText submit.
+- Dangerous command text and confirmation-style buttons are preserved but require
+  explicit operator confirmation by the policy layer.
 """
 
 
@@ -83,31 +100,32 @@ def _chat(messages: list[dict[str, str]], *, timeout_s: float) -> str:
     }
     # Ollama + many llama.cpp builds honor this; ignore if unsupported.
     payload["response_format"] = {"type": "json_object"}
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
+
+    def request(current_payload: dict[str, Any]) -> Any:
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(current_payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            body = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as e:
-        # Retry without response_format if server rejects it
-        if e.code in {400, 422} and "response_format" in payload:
+            return json.loads(resp.read().decode())
+
+    try:
+        try:
+            body = request(payload)
+        except urllib.error.HTTPError as first_error:
+            # Retry without response_format if server rejects it.
+            if first_error.code not in {400, 422}:
+                raise
             payload.pop("response_format", None)
-            data = json.dumps(payload).encode()
-            req = urllib.request.Request(
-                url,
-                data=data,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-                body = json.loads(resp.read().decode())
-        else:
-            raise BrainError(f"LLM HTTP {e.code}: {e.read()[:200]!r}") from e
+            body = request(payload)
+    except urllib.error.HTTPError as e:
+        try:
+            detail = e.read()[:200]
+        except Exception:
+            detail = b"<unavailable>"
+        raise BrainError(f"LLM HTTP {e.code}: {detail!r}") from e
     except Exception as e:
         raise BrainError(f"LLM unreachable at {url}: {e}") from e
 
@@ -186,23 +204,33 @@ def validate_step(
         text = str(step.get("text") or "")
         if not text:
             raise BrainError("TypeText.text empty")
-        return {
+        normalized = {
             "type": "TypeText",
             "text": text[:500],
             "submit": bool(step.get("submit")),
         }
+        if DANGEROUS_TYPE_TEXT_RE.search(text):
+            normalized["requires_confirmation"] = True
+        return normalized
 
     if stype == "ClickA11y":
         role = str(step.get("role") or "push button")
         name = str(step.get("name") or "").strip()
         if not name:
             raise BrainError("ClickA11y.name empty")
-        return {
+        normalized = {
             "type": "ClickA11y",
             "role": role,
             "name": name[:120],
             "window": step.get("window"),
         }
+        canonical_name = re.sub(r"\s+", " ", name.casefold())
+        if any(
+            re.search(rf"(?<!\w){re.escape(hint)}(?!\w)", canonical_name)
+            for hint in CONFIRM_CLICK_NAMES
+        ):
+            normalized["requires_confirmation"] = True
+        return normalized
 
     if stype == "Hotkey":
         keys = tuple(str(k).lower() for k in (step.get("keys") or []))

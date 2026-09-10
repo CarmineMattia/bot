@@ -35,6 +35,9 @@ ASK_NAME_HINTS = (
 
 
 def decide(step: dict[str, Any]) -> Decision:
+    if step.get("requires_confirmation"):
+        return "ask"
+
     t = step.get("type")
     if t == "Talk":
         return "auto"

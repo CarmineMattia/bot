@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import json
 import os
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
@@ -53,6 +55,49 @@ class BrainValidateTests(unittest.TestCase):
         )
         self.assertEqual(step["keys"], ["ctrl", "shift", "t"])
 
+    def test_dangerous_type_text_requires_confirmation_with_or_without_submit(self) -> None:
+        cases = (
+            ("sudo dnf update", False),
+            ("rm -rf build", True),
+            ("passwd", False),
+            ("curl https://example.com", True),
+        )
+        for text, submit in cases:
+            with self.subTest(text=text, submit=submit):
+                step = brain.validate_step(
+                    {"type": "TypeText", "text": text, "submit": submit},
+                    classify="gui",
+                    workspace=Path("/tmp/repo"),
+                )
+                self.assertEqual(step["text"], text)
+                self.assertEqual(step["submit"], submit)
+                self.assertEqual(policy.decide(step), "ask")
+
+    def test_confirmation_click_names_require_confirmation(self) -> None:
+        for name in ("OK", "Yes", "Accept", "Continue", "Sign in", "Cancel"):
+            with self.subTest(name=name):
+                step = brain.validate_step(
+                    {"type": "ClickA11y", "role": "push button", "name": name},
+                    classify="gui",
+                    workspace=Path("/tmp/repo"),
+                )
+                self.assertEqual(step["name"], name)
+                self.assertEqual(policy.decide(step), "ask")
+
+    def test_safe_brain_gui_steps_remain_auto(self) -> None:
+        typed = brain.validate_step(
+            {"type": "TypeText", "text": "hello", "submit": False},
+            classify="gui",
+            workspace=Path("/tmp/repo"),
+        )
+        clicked = brain.validate_step(
+            {"type": "ClickA11y", "role": "push button", "name": "New Folder"},
+            classify="gui",
+            workspace=Path("/tmp/repo"),
+        )
+        self.assertEqual(policy.decide(typed), "auto")
+        self.assertEqual(policy.decide(clicked), "auto")
+
     def test_extract_json_fences(self) -> None:
         obj = brain._extract_json('```json\n{"classify":"talk","step":{"type":"Talk","reply":"x"}}\n```')
         self.assertEqual(obj["classify"], "talk")
@@ -81,6 +126,16 @@ class BrainPlanFallbackTests(unittest.TestCase):
 
 
 class BrainHttpTests(unittest.TestCase):
+    @staticmethod
+    def _http_error(code: int) -> urllib.error.HTTPError:
+        return urllib.error.HTTPError(
+            "http://127.0.0.1:9/v1/chat/completions",
+            code,
+            "bad request",
+            {},
+            io.BytesIO(b"rejected"),
+        )
+
     def test_chat_parses_assistant_content(self) -> None:
         payload = {
             "choices": [
@@ -118,6 +173,28 @@ class BrainHttpTests(unittest.TestCase):
         ), patch("urllib.request.urlopen", return_value=_Resp()):
             step = brain.plan("focus files", workspace=Path("/tmp/repo"))
         self.assertEqual(step["app_id"], "org.gnome.Nautilus")
+
+    def test_chat_wraps_http_error_from_400_retry(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[self._http_error(400), self._http_error(500)],
+        ) as urlopen:
+            with self.assertRaises(brain.BrainError) as ctx:
+                brain._chat([], timeout_s=1)
+        self.assertIn("LLM HTTP 500", str(ctx.exception))
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_400_retry_failure_falls_back_to_stub(self) -> None:
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[self._http_error(400), urllib.error.URLError("offline")],
+        ):
+            step = plan.plan_step(
+                "focus the terminal",
+                workspace=Path("/tmp/repo"),
+                use_brain=True,
+            )
+        self.assertEqual(step["app_id"], "org.gnome.Ptyxis")
 
 
 if __name__ == "__main__":

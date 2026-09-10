@@ -156,9 +156,15 @@ def listen(
         path = Path(tmp) / "utterance.wav"
         record_wav(path, seconds=seconds)
         # copy out before tmp cleanup
-        keep = Path(tempfile.mkstemp(prefix="bot-utterance-", suffix=".wav")[1])
-        keep.write_bytes(path.read_bytes())
-        text = transcribe(keep)
+        fd, keep_name = tempfile.mkstemp(prefix="bot-utterance-", suffix=".wav")
+        os.close(fd)
+        keep = Path(keep_name)
+        try:
+            keep.write_bytes(path.read_bytes())
+            text = transcribe(keep)
+        except BaseException:
+            keep.unlink(missing_ok=True)
+            raise
         return text, keep
 
 

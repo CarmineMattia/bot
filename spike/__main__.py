@@ -18,6 +18,8 @@ Run from a normal user session (Ptyxis):
     python3 -m spike "click New Tab"
     python3 -m spike "new tab"
     python3 -m spike "code explain README.md"
+    python3 -m spike --speak "focus files"
+    python3 -m spike --listen 4 --speak
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from . import a11y, act, confirm, omp_tool, overlay, plan, policy
+from . import a11y, act, confirm, omp_tool, overlay, plan, policy, voice
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_PATH = ROOT / ".spike_state.json"
@@ -687,13 +689,19 @@ def main(argv: list[str] | None = None) -> int:
             "  --yes / --confirm     auto-confirm policy ask\n"
             "  --no / --abort        auto-abort policy ask\n"
             "  --confirm-timeout N   seconds to wait for y/n (default 60)\n"
+            "  --speak               TTS the user_reply with espeak-ng after the turn\n"
+            "  --listen [SECS]       record mic (default 4s), STT, then run that transcript\n"
+            "  --listen-file PATH    STT an existing wav/mp3 instead of recording\n"
             "\nEnv:\n"
             "  BOT_CONFIRM=yes|no    same as --yes / --no\n"
             "  BOT_OVERLAY=0         disable GTK overlay UI\n"
             "  BOT_ALLOW_REBIND=1    allow killall a11y rebind (off by default)\n"
-            "  BOT_BRAIN=0|1|auto   LLM planner off / on / try then stub (default auto)\n"
+            "  BOT_BRAIN=0|1         LLM planner (default 0 = stub)\n"
             "  BOT_LLM_BASE_URL      OpenAI-compat base (default http://127.0.0.1:8080/v1)\n"
-            "  BOT_LLM_MODEL         model id (default default)\n"
+            "  BOT_LLM_MODEL         model id\n"
+            "  BOT_SPEAK=0           disable TTS even with --speak\n"
+            "  BOT_TTS_VOICE         espeak voice (default en)\n"
+            "  BOT_WHISPER_MODEL     whisper model name (default base)\n"
         )
         return 0
     if argv[0] == "--state":
@@ -712,6 +720,9 @@ def main(argv: list[str] | None = None) -> int:
     raise_only = False
     confirm_forced: str | None = None
     confirm_timeout_s = 60.0
+    do_speak = False
+    listen_secs: float | None = None
+    listen_file: Path | None = None
     text_parts: list[str] = []
     i = 0
     while i < len(argv):
@@ -722,6 +733,26 @@ def main(argv: list[str] | None = None) -> int:
             confirm_forced = "yes"
         elif arg in {"--no", "--abort"}:
             confirm_forced = "no"
+        elif arg == "--speak":
+            do_speak = True
+        elif arg == "--listen":
+            listen_secs = 4.0
+            if i + 1 < len(argv) and not argv[i + 1].startswith("-"):
+                try:
+                    listen_secs = float(argv[i + 1])
+                    i += 1
+                except ValueError:
+                    pass
+        elif arg.startswith("--listen="):
+            listen_secs = float(arg.split("=", 1)[1])
+        elif arg == "--listen-file":
+            i += 1
+            if i >= len(argv):
+                print("missing path for --listen-file", file=sys.stderr)
+                return 2
+            listen_file = Path(argv[i])
+        elif arg.startswith("--listen-file="):
+            listen_file = Path(arg.split("=", 1)[1])
         elif arg == "--confirm-timeout":
             i += 1
             if i >= len(argv):
@@ -737,16 +768,59 @@ def main(argv: list[str] | None = None) -> int:
             text_parts.append(arg)
         i += 1
 
-    if not text_parts:
-        print("missing user text", file=sys.stderr)
-        return 2
-    user_text = " ".join(text_parts)
+    voice_meta: dict[str, Any] = {}
+    if listen_secs is not None or listen_file is not None:
+        try:
+            print(
+                json.dumps(
+                    {
+                        "voice": "listen",
+                        "seconds": listen_secs,
+                        "file": str(listen_file) if listen_file else None,
+                    }
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
+            transcript, wav = voice.listen(seconds=listen_secs or 4.0, wav_path=listen_file)
+        except voice.VoiceError as e:
+            print(json.dumps({"voice": "stt_error", "error": str(e)}), file=sys.stderr)
+            return 2
+        voice_meta = {"transcript": transcript, "wav": str(wav)}
+        print(json.dumps({"voice": "transcript", **voice_meta}), file=sys.stderr, flush=True)
+        if text_parts:
+            # explicit text wins over mic if both given
+            user_text = " ".join(text_parts)
+        else:
+            user_text = transcript
+        if not user_text.strip():
+            print("empty transcript / user text", file=sys.stderr)
+            return 2
+    else:
+        if not text_parts:
+            print("missing user text (or use --listen)", file=sys.stderr)
+            return 2
+        user_text = " ".join(text_parts)
+
     result = run_turn(
         user_text,
         raise_only=raise_only,
         confirm_forced=confirm_forced,
         confirm_timeout_s=confirm_timeout_s,
     )
+    if voice_meta:
+        result = {**result, "voice": voice_meta}
+        # re-print with voice fields for operators that parse last JSON — already printed once.
+        # Keep stderr-only for transcript; stdout already has turn JSON from run_turn.
+
+    if do_speak:
+        try:
+            voice.speak(str(result.get("user_reply") or ""))
+            print(json.dumps({"voice": "spoke", "chars": len(str(result.get("user_reply") or ""))}), file=sys.stderr)
+        except voice.VoiceError as e:
+            print(json.dumps({"voice": "tts_error", "error": str(e)}), file=sys.stderr)
+            return 1 if result.get("outcome") == "ok" else 1
+
     return 0 if result.get("outcome") == "ok" else 1
 
 

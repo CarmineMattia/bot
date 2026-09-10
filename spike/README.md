@@ -125,3 +125,20 @@ python3 -m spike "focus the files app"
 ```
 
 Invalid/unreachable brain → automatic stub fallback. Steps are allowlisted (Focus apps, Hotkey chord, CodeTask, Talk).
+
+## Voice edge (push-to-talk)
+
+Same turn cycle: mic → STT → plan/act → optional TTS of `user_reply`.
+
+```bash
+# TTS only (needs espeak-ng)
+python3 -m spike --speak --no "click Delete"
+
+# Record 4s, STT (needs openai-whisper), then run, then speak reply
+python3 -m spike --listen 4 --speak
+
+# Or STT an existing file
+python3 -m spike --listen-file ./utterance.wav --speak
+```
+
+`BOT_SPEAK=0` disables TTS. Full-duplex / VAD are out of v1.

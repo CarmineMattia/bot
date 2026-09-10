@@ -67,7 +67,17 @@ The planner emits the explicit step
 ydotool. It does **not** retry as `ClickA11y` or invent a silent fallback.
 `click New Tab` remains the a11y-click path (and will still fail if AT-SPI has no button).
 
-Policy: destructive click names (`Delete`, `Send`, …) → `need_confirm` (ask).
+Policy: destructive click names (`Delete`, `Send`, …) → **ask** (overlay `CONFIRM?` + wait).
+
+```bash
+# non-interactive confirm / abort
+python3 -m spike --yes "click Delete"     # would act after confirm
+python3 -m spike --no  "click Delete"     # cancelled, no act
+# TTY: type y / n when prompted
+python3 -m spike "click Delete"
+```
+
+During auto announce pause, typing `q` / `n` on a TTY aborts before act.
 
 ## Overlay UI
 

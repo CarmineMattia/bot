@@ -70,6 +70,8 @@ Minimum knobs (design):
 - Abort key / overlay cancel during announce pause
 - Kill switch: stop conductor, freeze GUI hand
 
+Spike (`spike/confirm.py`): policy `ask` shows overlay `CONFIRM? … [y/n]`, then waits for TTY `y`/`n`, or `--yes`/`--no` / `BOT_CONFIRM`. Auto announce pause is abortible on a TTY (`q`/`n`).
+
 ## Logging
 
 Log every policy decision: `{action, class, decision, user_confirm?}`. Logs stay local. Do not ship them unless the operator opts in later.

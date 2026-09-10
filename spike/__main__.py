@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from . import a11y, act, overlay, plan, policy
+from . import a11y, act, confirm, overlay, plan, policy
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE_PATH = ROOT / ".spike_state.json"
@@ -77,7 +77,14 @@ def iso_now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
-def run_turn(user_text: str, pause_ms: int = 400, *, raise_only: bool = False) -> dict[str, Any]:
+def run_turn(
+    user_text: str,
+    pause_ms: int = 400,
+    *,
+    raise_only: bool = False,
+    confirm_forced: str | None = None,
+    confirm_timeout_s: float = 60.0,
+) -> dict[str, Any]:
     state = load_state()
     step = plan.plan_gui_step(user_text)
     if step is None:
@@ -99,6 +106,7 @@ def run_turn(user_text: str, pause_ms: int = 400, *, raise_only: bool = False) -
     decision = policy.decide(step)
     announce = plan.announce_for(step)
     stype = step.get("type")
+    user_confirm: str | None = None
 
     if decision == "deny":
         result = {
@@ -108,21 +116,63 @@ def run_turn(user_text: str, pause_ms: int = 400, *, raise_only: bool = False) -
             "outcome": "stop",
             "observation": None,
             "user_reply": f"Denied by policy: {announce}",
+            "user_confirm": None,
         }
         print(json.dumps(result, indent=2))
         return result
 
     if decision == "ask":
-        result = {
-            "announce": announce,
-            "step": step,
-            "policy": decision,
-            "outcome": "need_confirm",
-            "observation": None,
-            "user_reply": f"Confirm required before: {announce}",
-        }
-        print(json.dumps(result, indent=2))
-        return result
+        overlay.show(
+            {
+                "status": f"CONFIRM? {announce}  [y/n]",
+                "phase": "announce",
+                "target": a11y.target_hint_for_step(step),
+            }
+        )
+        verdict = confirm.wait_confirm(
+            prompt=f"Policy ask — confirm before act: {announce}",
+            forced=confirm_forced,
+            timeout_s=confirm_timeout_s,
+        )
+        user_confirm = verdict
+        if verdict == "confirm":
+            overlay.show(
+                {
+                    "status": announce,
+                    "phase": "announce",
+                    "target": a11y.target_hint_for_step(step),
+                }
+            )
+            # fall through into act path
+        else:
+            if verdict == "need_tty":
+                outcome = "need_confirm"
+                reply = (
+                    f"Confirm required before: {announce}. "
+                    "Re-run with --yes / --no, or set BOT_CONFIRM=yes|no, or use a TTY."
+                )
+                phase = "cancelled"
+            elif verdict == "timeout":
+                outcome = "cancelled"
+                reply = f"Confirm timed out — aborted: {announce}"
+                phase = "cancelled"
+            else:
+                outcome = "cancelled"
+                reply = f"Aborted by user before act: {announce}"
+                phase = "cancelled"
+            overlay.show({"status": reply, "phase": phase})
+            overlay.clear(phase if phase != "cancelled" else "cancelled")
+            result = {
+                "announce": announce,
+                "step": step,
+                "policy": decision,
+                "outcome": outcome,
+                "observation": None,
+                "user_reply": reply,
+                "user_confirm": user_confirm,
+            }
+            print(json.dumps(result, indent=2))
+            return result
 
     pre = a11y.observe()
 
@@ -141,6 +191,7 @@ def run_turn(user_text: str, pause_ms: int = 400, *, raise_only: bool = False) -
                 ),
                 "action_log_len": len(state.action_log),
                 "raise_only": raise_only,
+                "user_confirm": user_confirm,
             }
             overlay.show({"status": result["user_reply"], "phase": "cancelled"})
             overlay.clear("cancelled")
@@ -162,6 +213,7 @@ def run_turn(user_text: str, pause_ms: int = 400, *, raise_only: bool = False) -
                 "frames_after": 0,
                 "opened_extra": False,
                 "raise_only": True,
+                "user_confirm": user_confirm,
             }
             overlay.show({"status": result["user_reply"], "phase": "failed"})
             overlay.clear("failed")
@@ -176,7 +228,21 @@ def run_turn(user_text: str, pause_ms: int = 400, *, raise_only: bool = False) -
             "target": a11y.target_hint_for_step(step),
         }
     )
-    time.sleep(pause_ms / 1000.0)
+    if confirm.abortable_pause(pause_ms):
+        reply = f"Aborted during announce pause: {announce}"
+        overlay.show({"status": reply, "phase": "cancelled"})
+        overlay.clear("cancelled")
+        result = {
+            "announce": announce,
+            "step": step,
+            "policy": decision,
+            "outcome": "cancelled",
+            "observation": pre,
+            "user_reply": reply,
+            "user_confirm": "abort",
+        }
+        print(json.dumps(result, indent=2))
+        return result
 
     overlay.show(
         {
@@ -326,6 +392,7 @@ def run_turn(user_text: str, pause_ms: int = 400, *, raise_only: bool = False) -
         "method": act_info.get("method"),
         "raise_err": act_info.get("raise_err"),
         "raise_only": raise_only,
+        "user_confirm": user_confirm,
         "act": {k: v for k, v in act_info.items() if k != "error" or act_err},
     }
     print(json.dumps(result, indent=2))
@@ -336,7 +403,16 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in {"-h", "--help"}:
         print(__doc__)
-        print("\nFlags:\n  --raise-only   never launch; require existing frames (Silvio protocol)")
+        print(
+            "\nFlags:\n"
+            "  --raise-only          never launch; require existing frames (Silvio protocol)\n"
+            "  --yes / --confirm     auto-confirm policy ask\n"
+            "  --no / --abort        auto-abort policy ask\n"
+            "  --confirm-timeout N   seconds to wait for y/n (default 60)\n"
+            "\nEnv:\n"
+            "  BOT_CONFIRM=yes|no    same as --yes / --no\n"
+            "  BOT_OVERLAY=0         disable GTK overlay UI\n"
+        )
         return 0
     if argv[0] == "--state":
         st = load_state()
@@ -350,15 +426,45 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
+
     raise_only = False
-    if argv[0] == "--raise-only":
-        raise_only = True
-        argv = argv[1:]
-    if not argv:
-        print("missing user text after --raise-only", file=sys.stderr)
+    confirm_forced: str | None = None
+    confirm_timeout_s = 60.0
+    text_parts: list[str] = []
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--raise-only":
+            raise_only = True
+        elif arg in {"--yes", "--confirm"}:
+            confirm_forced = "yes"
+        elif arg in {"--no", "--abort"}:
+            confirm_forced = "no"
+        elif arg == "--confirm-timeout":
+            i += 1
+            if i >= len(argv):
+                print("missing value for --confirm-timeout", file=sys.stderr)
+                return 2
+            confirm_timeout_s = float(argv[i])
+        elif arg.startswith("--confirm-timeout="):
+            confirm_timeout_s = float(arg.split("=", 1)[1])
+        elif arg.startswith("-"):
+            print(f"unknown flag: {arg}", file=sys.stderr)
+            return 2
+        else:
+            text_parts.append(arg)
+        i += 1
+
+    if not text_parts:
+        print("missing user text", file=sys.stderr)
         return 2
-    user_text = " ".join(argv)
-    result = run_turn(user_text, raise_only=raise_only)
+    user_text = " ".join(text_parts)
+    result = run_turn(
+        user_text,
+        raise_only=raise_only,
+        confirm_forced=confirm_forced,
+        confirm_timeout_s=confirm_timeout_s,
+    )
     return 0 if result.get("outcome") == "ok" else 1
 
 

@@ -157,8 +157,40 @@ def plan_gui_step(user_text: str) -> dict[str, Any] | None:
 
 
 
-def plan_step(user_text: str, *, workspace: Path | None = None) -> dict[str, Any] | None:
-    """Plan exactly one spike step; ``code``/``omp`` delegates to omp."""
+def plan_step(
+    user_text: str,
+    *,
+    workspace: Path | None = None,
+    last_observation: dict[str, Any] | None = None,
+    action_log_tail: list[dict[str, Any]] | None = None,
+    use_brain: bool | None = None,
+) -> dict[str, Any] | None:
+    """Plan exactly one spike step.
+
+    Tries the LLM brain first (unless disabled); on failure falls back to the
+    deterministic stub (`code`/`omp` prefix + GUI phrases).
+    """
+    root = (workspace or Path.cwd()).expanduser().resolve()
+    if use_brain is None:
+        from . import brain
+
+        try_brain = brain.enabled()
+    else:
+        try_brain = use_brain
+
+    if try_brain:
+        from . import brain
+
+        try:
+            return brain.plan(
+                user_text,
+                workspace=root,
+                last_observation=last_observation,
+                action_log_tail=action_log_tail,
+            )
+        except brain.BrainError:
+            pass
+
     match = re.match(
         r"^(?:code|omp)\s+(.+)$",
         user_text.strip(),
@@ -167,7 +199,6 @@ def plan_step(user_text: str, *, workspace: Path | None = None) -> dict[str, Any
     if match:
         prompt = match.group(1).strip()
         if prompt:
-            root = (workspace or Path.cwd()).expanduser().resolve()
             return {
                 "type": "CodeTask",
                 "prompt": prompt,
@@ -178,6 +209,10 @@ def plan_step(user_text: str, *, workspace: Path | None = None) -> dict[str, Any
 
 def announce_for(step: dict[str, Any]) -> str:
     stype = step.get("type")
+    if stype == "Talk":
+        reply = str(step.get("reply") or "")
+        shown = reply if len(reply) <= 80 else reply[:77] + "…"
+        return f"Reply: {shown}"
     if stype == "CodeTask":
         prompt = str(step.get("prompt") or "")
         shown = prompt if len(prompt) <= 100 else prompt[:97] + "…"

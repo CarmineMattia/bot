@@ -1,7 +1,7 @@
 """Minimal GUI-loop spike for Linux (GNOME/Wayland first).
 
 Implements docs/gui-loop.md success criteria with:
-- stub planner (no LLM): FocusWindow | TypeText | ClickA11y | Hotkey | CodeTask
+- stub planner + optional LLM brain (BOT_BRAIN / BOT_LLM_*): FocusWindow | TypeText | ClickA11y | Hotkey | CodeTask | Talk
 - overlay (GTK UI + stderr log; BOT_OVERLAY=0 disables UI)
 - FocusWindow: ensure target in AT-SPI tree, then Activate / overview raise
 - TypeText / ClickA11y: ydotool (+ AT-SPI action when possible)
@@ -276,7 +276,20 @@ def run_turn(
     confirm_timeout_s: float = 60.0,
 ) -> dict[str, Any]:
     state = load_state()
-    step = plan.plan_step(user_text, workspace=ROOT)
+    log_tail = [
+        {
+            "announce": e.announce,
+            "outcome": e.outcome,
+            "step_type": (e.step or {}).get("type"),
+        }
+        for e in state.action_log[-5:]
+    ]
+    step = plan.plan_step(
+        user_text,
+        workspace=ROOT,
+        last_observation=state.last_observation,
+        action_log_tail=log_tail,
+    )
     if step is None:
         return _emit(
             state,
@@ -297,6 +310,21 @@ def run_turn(
     announce = plan.announce_for(step)
     stype = step.get("type")
     user_confirm: str | None = None
+
+    if stype == "Talk":
+        reply = str(step.get("reply") or "")
+        overlay.show({"status": announce, "phase": "done"})
+        overlay.clear("done")
+        return _emit(
+            state,
+            announce=announce,
+            step=step,
+            decision=decision,
+            outcome="ok",
+            reply=reply,
+            observation=state.last_observation,
+            extra={"user_confirm": None, "hand": "talk"},
+        )
 
     if decision == "deny":
         return _emit(
@@ -663,6 +691,9 @@ def main(argv: list[str] | None = None) -> int:
             "  BOT_CONFIRM=yes|no    same as --yes / --no\n"
             "  BOT_OVERLAY=0         disable GTK overlay UI\n"
             "  BOT_ALLOW_REBIND=1    allow killall a11y rebind (off by default)\n"
+            "  BOT_BRAIN=0|1|auto   LLM planner off / on / try then stub (default auto)\n"
+            "  BOT_LLM_BASE_URL      OpenAI-compat base (default http://127.0.0.1:8080/v1)\n"
+            "  BOT_LLM_MODEL         model id (default default)\n"
         )
         return 0
     if argv[0] == "--state":

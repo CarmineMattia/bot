@@ -111,3 +111,17 @@ python3 -m spike --yes "omp add parser unit tests"
 ```
 
 Requires `omp` and `bwrap` on PATH. Workspace must be a git repo root. Runs one sandboxed non-interactive `omp --print` process.
+
+## Brain (optional LLM planner)
+
+By default the spike uses the **stub** phrases (`BOT_BRAIN` off). Opt in to an OpenAI-compatible server (llama.cpp `:8080` or Ollama `:11434`):
+
+```bash
+export BOT_BRAIN=1
+export BOT_LLM_BASE_URL=http://127.0.0.1:11434/v1   # or http://127.0.0.1:8080/v1
+export BOT_LLM_MODEL=qwen2.5:3b                      # ollama tag / llama model id
+python3 -m spike "focus the files app"
+# BOT_BRAIN=0 → force stub only
+```
+
+Invalid/unreachable brain → automatic stub fallback. Steps are allowlisted (Focus apps, Hotkey chord, CodeTask, Talk).

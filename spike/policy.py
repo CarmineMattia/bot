@@ -36,6 +36,8 @@ ASK_NAME_HINTS = (
 
 def decide(step: dict[str, Any]) -> Decision:
     t = step.get("type")
+    if t == "Talk":
+        return "auto"
     if t == "CodeTask":
         # omp has no path-scoped read sandbox. Keep every delegated task behind
         # explicit conductor confirmation rather than trusting prompt wording.

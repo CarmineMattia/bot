@@ -32,6 +32,14 @@ ASK_NAME_HINTS = (
     "allow",
     "grant",
     "password",
+    "cancel",
+    "save",
+    "apply",
+    "discard",
+    "overwrite",
+    "replace",
+    "quit",
+    "exit",
     # Dialog affirmatives can commit or dismiss state even when their labels are
     # generic. Keep obviously navigational demo targets (for example New Tab)
     # automatic, but require confirmation for these affirmative verbs.
@@ -55,14 +63,31 @@ ASK_EXACT_NAMES = {
     "done",
     "close",
     "dismiss",
+    "cancel",
+    "save",
+    "don't save",
+    "dont save",
+    "do not save",
+    "apply",
+    "discard",
+    "overwrite",
+    "replace",
+    "quit",
+    "exit",
 }
 
-DANGEROUS_TEXT_RE = re.compile(r"(?<![\w-])(?:rm|sudo|passwd|curl)(?![\w-])", re.IGNORECASE)
+DANGEROUS_TEXT_RE = re.compile(
+    r"(?<![\w-])(?:sudo|rm|passwd|curl|wget|ssh|scp|chmod|chown|dd|"
+    r"mkfs(?:\.[a-z0-9]+)?|shutdown|reboot)(?![\w-])",
+    re.IGNORECASE,
+)
 SHELL_EVALUATION_RE = re.compile(r"\$\{|\$\(|`")
 
 
 def _normalized_name(name: Any) -> str:
-    return " ".join(str(name or "").lower().replace("-", " ").split())
+    return " ".join(
+        str(name or "").lower().replace("-", " ").replace("’", "'").split()
+    )
 
 
 def _dangerous_typed_text(text: Any) -> bool:
